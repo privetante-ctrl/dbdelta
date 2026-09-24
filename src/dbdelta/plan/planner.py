@@ -117,8 +117,15 @@ class _Planner:
     def __init__(self, dialect: Dialect) -> None:
         self._dialect = dialect
         self._checks_foreign_keys = dialect.traits.checks_foreign_keys_in_ddl
+        self._column_positions: dict[tuple[str, str], int] = {}
 
     def plan(self, changes: list[Change], source: Schema, target: Schema) -> Iterator[Operation]:
+        # ADD COLUMN appends, so columns must be added in their target order.
+        self._column_positions = {
+            (self._key(table.name), self._key(column.name)): position
+            for table in target.tables
+            for position, column in enumerate(table.columns)
+        }
         changes += self._release_replaced_defaults(changes)
         if self._checks_foreign_keys:
             changes += self._rebuild_foreign_keys_on_replaced_keys(changes, source)
@@ -323,12 +330,12 @@ class _Planner:
     def _key(self, name: str) -> str:
         return name_key(name, self._dialect)
 
-    def _position(self, operation: Operation) -> tuple[str, int, str]:
-        return (
-            self._key(_subject(operation)),
-            _column_step(operation),
-            describe_operation(operation),
-        )
+    def _position(self, operation: Operation) -> tuple[str, int, int, str]:
+        subject = self._key(_subject(operation))
+        column = 0
+        if isinstance(operation, AddColumn):
+            column = self._column_positions[(subject, self._key(operation.column.name))]
+        return (subject, _column_step(operation), column, describe_operation(operation))
 
 
 _TABLE_CHANGES = (
