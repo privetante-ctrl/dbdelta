@@ -55,7 +55,10 @@ uv run pre-commit run --all-files # all of the above
 - **Renames are never silent**: drop+add with a compatible shape is reported as a possible
   rename with a confidence score; only `--detect-renames` turns it into a RENAME.
 - **Every risk** has a level (`info`/`warning`/`danger`), a plain explanation and a safer
-  alternative.
+  alternative. A rule is a function in `risk/rules/` registered with `@change_rule` or
+  `@rule` under a stable kebab-case code; add it to the rules table in the docs and give it
+  unit tests, including a case where it must stay silent. Check queries must run before the
+  migration, so never reference columns the migration adds.
 - **Down migrations** are best-effort; data-losing reversals are marked `IRREVERSIBLE`
   in the SQL (comment) and in the report.
 - **Transactions**: wrap in `BEGIN`/`COMMIT` where DDL is transactional; statements that cannot

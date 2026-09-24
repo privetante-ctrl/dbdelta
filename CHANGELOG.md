@@ -24,3 +24,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   SQLite table rebuilds that keep the data.
 - 34 fixture schema pairs with expected SQL, round-trip tests on SQLite and execution tests
   on PostgreSQL.
+- Risk assessment with 13 rules, each with a level, an explanation, a safer alternative and,
+  where the data decides, a query to run before migrating. Findings are also printed as
+  comments in the generated SQL.

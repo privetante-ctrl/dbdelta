@@ -127,6 +127,46 @@ PostgreSQL checks foreign keys in DDL; SQLite only checks them when rows change.
 In SQLite all foreign keys stay inline in `CREATE TABLE`, which is the only place SQLite
 accepts them.
 
+## Risk
+
+`assess(changes, context)` runs every registered rule over the diff and returns findings,
+most dangerous first. A finding has a level (`info`, `warning`, `danger`), a plain explanation,
+a safer alternative and, when the data decides whether the change succeeds, a query to run
+before migrating (duplicates, NULLs, rows without a parent, values that do not fit).
+
+- **A registry of plain functions.** A rule is a function registered with `@change_rule` (one
+  change at a time) or `@rule` (the whole migration) under a stable code. Codes appear in
+  reports and are what users list to silence a rule. Adding a rule is adding a function.
+- **Rules look at changes, not SQL.** They read the diff and dialect facts, never the plan
+  or the emitted statements, so they stay independent of how the SQL is written. The facts
+  they share with the emitter, such as which PostgreSQL type changes rewrite the table, live
+  in `dialects/`; `tests/integration/test_postgres_rewrites.py` checks those predictions
+  against PostgreSQL by watching the table's relfilenode.
+- **Levels follow what is known.** `RiskContext.row_estimates` holds table sizes when the
+  source is a live database. Dropping from a table known to be empty is `info`; locks on
+  tables known to be smaller than `large_table_rows` are `info`; anything unknown is treated
+  as large and full.
+- **Check queries are real.** `tests/integration/test_risk_checks.py` runs every suggested
+  query against SQLite and PostgreSQL for every fixture pair. Queries about columns the
+  migration adds are left out, since they cannot run before it.
+- **Findings also appear in the SQL**, as comments above the statements they concern.
+
+| Rule | Level | What it catches |
+|------|-------|-----------------|
+| `drop-table` | danger | dropping a table deletes its rows |
+| `drop-column` | danger | dropping a column deletes its values |
+| `enum-values` | danger / warning | removed enum values fail on rows that use them; reordering changes sorting |
+| `narrowing-type` | danger | a narrower type cannot hold every value (info in SQLite, which does not enforce types) |
+| `type-rewrite` | warning | the type change rewrites the table under an exclusive lock, possibly with USING |
+| `add-not-null-column` | danger | NOT NULL without a default fails on a table with rows |
+| `add-column-rewrite` | warning | identity columns and per-row defaults rewrite the table |
+| `set-not-null` | warning | fails on NULLs and scans the table under an exclusive lock |
+| `unique-duplicates` | warning | existing duplicates make a new unique key or primary key fail |
+| `check-violations` | warning | existing rows may violate a new CHECK |
+| `foreign-key` | warning | validation locks both tables; SQLite does not check existing rows |
+| `index-lock` | warning | CREATE INDEX blocks writes without `--concurrent-indexes` |
+| `sqlite-rebuild` | warning | SQLite rebuilds the table: copies all rows, drops triggers |
+
 ## Emit
 
 Emitters turn a plan into a `Script`: statements grouped into blocks, each block either run
