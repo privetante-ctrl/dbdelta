@@ -5,5 +5,6 @@ above compare canonical values only.
 """
 
 from dbdelta.loaders.base import LoadError, LoadResult
+from dbdelta.loaders.ddl import load_ddl, load_ddl_file
 
-__all__ = ["LoadError", "LoadResult"]
+__all__ = ["LoadError", "LoadResult", "load_ddl", "load_ddl_file"]
