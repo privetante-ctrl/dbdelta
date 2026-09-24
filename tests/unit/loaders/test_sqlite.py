@@ -1,5 +1,6 @@
 import sqlite3
 from collections.abc import Callable
+from contextlib import closing
 from pathlib import Path
 
 import pytest
@@ -17,7 +18,7 @@ LiveSQLite = Callable[[str], LoadResult]
 @pytest.fixture
 def database(tmp_path: Path) -> Path:
     path = tmp_path / "app.db"
-    with sqlite3.connect(path) as connection:
+    with closing(sqlite3.connect(path)) as connection:
         connection.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT NOT NULL)")
     return path
 

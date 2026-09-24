@@ -5,6 +5,7 @@ from pathlib import Path
 
 from sqlalchemy import Engine, create_engine, make_url
 from sqlalchemy.exc import ArgumentError, SQLAlchemyError
+from sqlalchemy.pool import NullPool
 
 from dbdelta.dialects import Dialect
 from dbdelta.loaders.base import LoadError, LoadResult
@@ -61,4 +62,7 @@ def _sqlite_engine(url: str) -> Engine:
         # sqlite3 would silently create an empty database, which reads as "drop every table".
         raise LoadError(f"SQLite database file not found: {path}")
     uri = f"{path.resolve().as_uri()}?mode=ro"
-    return create_engine("sqlite://", creator=lambda: sqlite3.connect(uri, uri=True))
+    # NullPool closes the connection as soon as the single read is done.
+    return create_engine(
+        "sqlite://", creator=lambda: sqlite3.connect(uri, uri=True), poolclass=NullPool
+    )
