@@ -9,6 +9,7 @@ from collections.abc import Callable
 import pytest
 
 from dbdelta.dialects import Dialect
+from dbdelta.diff import diff_schemas
 from dbdelta.loaders import LoadResult, load_ddl
 
 LiveSQLite = Callable[[str], LoadResult]
@@ -98,3 +99,4 @@ def test_sqlite_file_and_database_load_equally(ddl: str, live_sqlite: LiveSQLite
     from_database = live_sqlite(ddl)
 
     assert from_database.schema == from_file.schema
+    assert diff_schemas(from_file.schema, from_database.schema, Dialect.SQLITE) == ()

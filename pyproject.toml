@@ -124,6 +124,7 @@ exclude_also = [
     "if TYPE_CHECKING:",
     "raise NotImplementedError",
     "@overload",
+    "assert_never\\(",
 ]
 
 [tool.importlinter]
