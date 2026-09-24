@@ -88,6 +88,8 @@ _ADD_IDENTITY = re.compile(
 
 _SNIPPET_LENGTH = 70
 
+_SQLITE_HEADER = b"SQLite format 3\x00"
+
 
 def load_ddl(sql: str, dialect: Dialect, schema: str | None = None) -> LoadResult:
     """Build a schema from DDL text written in ``dialect``.
@@ -108,6 +110,12 @@ def load_ddl_file(path: Path, dialect: Dialect, schema: str | None = None) -> Lo
         sql = path.read_text(encoding="utf-8")
     except OSError as error:
         raise LoadError(f"cannot read {path}: {error.strerror}") from error
+    except UnicodeDecodeError:
+        hint = ""
+        with path.open("rb") as file:
+            if file.read(len(_SQLITE_HEADER)) == _SQLITE_HEADER:
+                hint = f"; it is a SQLite database, so pass it as sqlite:///{path}"
+        raise LoadError(f"{path} is not a UTF-8 text file{hint}") from None
     try:
         return load_ddl(sql, dialect, schema)
     except LoadError as error:

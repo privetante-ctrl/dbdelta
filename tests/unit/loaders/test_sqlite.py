@@ -8,7 +8,14 @@ from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
 
 from dbdelta.dialects import Dialect
-from dbdelta.loaders import LoadError, LoadResult, dialect_from_url, load_database, load_source
+from dbdelta.loaders import (
+    LoadError,
+    LoadResult,
+    describe_source,
+    dialect_from_url,
+    load_database,
+    load_source,
+)
 from dbdelta.loaders.database import _sqlite_engine
 from dbdelta.model import Column, DataType, ForeignKey, Identity, Index, IndexElement
 
@@ -102,6 +109,23 @@ def test_load_source_needs_a_dialect_for_files(tmp_path: Path) -> None:
 def test_load_source_rejects_a_conflicting_dialect(database: Path) -> None:
     with pytest.raises(LoadError, match="is a sqlite database, not postgresql"):
         load_source(f"sqlite:///{database}", Dialect.POSTGRESQL)
+
+
+def test_a_database_passed_as_a_schema_file_is_explained(database: Path) -> None:
+    with pytest.raises(LoadError, match=r"not a UTF-8 text file; it is a SQLite database, so"):
+        load_source(str(database), Dialect.SQLITE)
+
+
+@pytest.mark.parametrize(
+    ("source", "shown"),
+    [
+        ("schema.sql", "schema.sql"),
+        ("postgresql://app:secret@db/app", "postgresql://app:***@db/app"),
+        ("sqlite:///app.db", "sqlite:///app.db"),
+    ],
+)
+def test_sources_are_described_without_passwords(source: str, shown: str) -> None:
+    assert describe_source(source) == shown
 
 
 def test_live_loader_reads_what_the_inspector_misses(live_sqlite: LiveSQLite) -> None:

@@ -24,6 +24,11 @@ def is_url(source: str) -> bool:
     return "://" in source
 
 
+def describe_source(source: str) -> str:
+    """Name a source for messages and reports: a path, or a URL without its password."""
+    return _hide_password(source) if is_url(source) else source
+
+
 def dialect_from_url(url: str) -> Dialect:
     """Return the dialect of a database URL such as ``postgresql+psycopg://...``."""
     scheme = url.partition("://")[0].partition("+")[0].lower()

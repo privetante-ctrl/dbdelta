@@ -8,12 +8,13 @@ from pathlib import Path
 
 from dbdelta.dialects import Dialect
 from dbdelta.loaders.base import LoadError, LoadResult
-from dbdelta.loaders.database import dialect_from_url, is_url, load_database
+from dbdelta.loaders.database import describe_source, dialect_from_url, is_url, load_database
 from dbdelta.loaders.ddl import load_ddl, load_ddl_file
 
 __all__ = [
     "LoadError",
     "LoadResult",
+    "describe_source",
     "dialect_from_url",
     "is_url",
     "load_database",
