@@ -40,9 +40,14 @@ class Script:
         for block in self.blocks:
             yield from block.statements
 
-    def render(self) -> str:
-        """Render the script as SQL text, with BEGIN and COMMIT around transactional blocks."""
-        sections = [_render_block(block) for block in self.blocks if block.statements]
+    def render(self, header: str | None = None) -> str:
+        """Render the script as SQL text, with BEGIN and COMMIT around transactional blocks.
+
+        ``header`` is printed first as a comment. Every line of every comment starts with
+        ``--``, so names containing line breaks cannot turn comment text into SQL.
+        """
+        sections = ["\n".join(_comment_lines(header))] if header else []
+        sections += [_render_block(block) for block in self.blocks if block.statements]
         return "\n\n".join(sections) + "\n" if sections else ""
 
 

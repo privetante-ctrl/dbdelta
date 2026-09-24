@@ -50,3 +50,12 @@ def test_notes_render_as_comments_only() -> None:
 def test_empty_script() -> None:
     assert Script().render() == ""
     assert Script().is_empty
+
+
+def test_header_is_a_comment_even_across_line_breaks() -> None:
+    script = Script((Block((Statement("SELECT 1"),), transactional=False),))
+
+    assert script.render(header="from a.sql\rDROP TABLE t;\nto b.sql") == (
+        "-- from a.sql\n-- DROP TABLE t;\n-- to b.sql\n\nSELECT 1;\n"
+    )
+    assert Script().render(header="nothing to do") == "-- nothing to do\n"
