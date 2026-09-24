@@ -29,6 +29,11 @@ _NUMERIC_TYPES = frozenset(
 # PostgreSQL reports casts to char(n) columns as casts to its internal name bpchar.
 _CAST_ALIASES = {"bpchar": "char"}
 
+_STRING_TYPES = frozenset({"text", "varchar", "char"})
+
+# Casting a string literal to these types keeps its value unchanged.
+_LOSSLESS_STRING_CASTS = frozenset({DataType("text"), DataType("varchar")})
+
 _NUMBER = re.compile(r"-?(\d+(\.\d*)?|\.\d+)([eE][-+]?\d+)?")
 _WHITESPACE = re.compile(r"\s+")
 
@@ -73,7 +78,7 @@ def normalize_expression(node: exp.Expr, dialect: Dialect) -> Expression:
 def normalize_default(node: exp.Expr, column_type: DataType, dialect: Dialect) -> str | None:
     """Canonicalize a column default for a column of ``column_type``."""
     node = _unwrap(node)
-    if isinstance(node, exp.Cast) and _same_base_type(node.to, column_type, dialect):
+    if isinstance(node, exp.Cast) and _cast_is_redundant(node, column_type, dialect):
         node = _unwrap(node.this)
     if isinstance(node, exp.Null):
         return None
@@ -96,10 +101,18 @@ def _unwrap(node: exp.Expr) -> exp.Expr:
     return node
 
 
-def _same_base_type(cast_to: exp.DataType, column_type: DataType, dialect: Dialect) -> bool:
-    target = canonical_type(cast_to, dialect)
+def _cast_is_redundant(cast: exp.Cast, column_type: DataType, dialect: Dialect) -> bool:
+    """Tell whether storing the uncast value in the column gives the same result."""
+    target = canonical_type(cast.to, dialect)
     name = _CAST_ALIASES.get(target.name, target.name)
-    return name == column_type.name and target.is_array == column_type.is_array
+    if name == column_type.name and target.is_array == column_type.is_array:
+        return True
+    return (
+        isinstance(_unwrap(cast.this), exp.Literal)
+        and target in _LOSSLESS_STRING_CASTS
+        and column_type.name in _STRING_TYPES
+        and not column_type.is_array
+    )
 
 
 def _coerce_literal(node: exp.Expr, column_type: DataType) -> exp.Expr:

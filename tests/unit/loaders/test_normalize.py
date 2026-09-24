@@ -28,8 +28,13 @@ BOOLEAN = DataType("boolean")
         (PG, "-1", INTEGER, "-1"),
         (PG, "'1.5'::real", DataType("real"), "1.5"),
         (PG, "0", DataType("numeric", (10, 2)), "0"),
-        # Casts to another type change the value and are kept.
-        (PG, "'x'::text", DataType("varchar"), "CAST('x' AS text)"),
+        # Casting a string literal to an unbounded string type keeps its value.
+        (PG, "'x'::text", DataType("varchar", (5,)), "'x'"),
+        (PG, "'x'::character varying", DataType("text"), "'x'"),
+        # Other casts may change the value and are kept.
+        (PG, "'abcdef'::varchar(3)", DataType("text"), "CAST('abcdef' AS varchar(3))"),
+        (PG, "'1'::integer", DataType("text"), "CAST('1' AS integer)"),
+        (PG, "lower('X')::text", DataType("varchar"), "CAST(LOWER('X') AS text)"),
         (PG, "true", BOOLEAN, "TRUE"),
         (PG, "'t'", BOOLEAN, "TRUE"),
         (PG, "'off'", BOOLEAN, "FALSE"),
