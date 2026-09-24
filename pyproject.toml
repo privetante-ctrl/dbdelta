@@ -39,3 +39,122 @@ Changelog = "https://github.com/privetante-ctrl/dbdelta/blob/main/CHANGELOG.md"
 [build-system]
 requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-cov>=6.0",
+    "hypothesis>=6.120",
+    "ruff>=0.15",
+    "mypy>=1.15",
+    "pre-commit>=4.0",
+    "import-linter>=2.1",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E", "W",  # pycodestyle
+    "F",       # pyflakes
+    "I",       # isort
+    "N",       # pep8-naming
+    "UP",      # pyupgrade
+    "B",       # flake8-bugbear
+    "A",       # flake8-builtins
+    "C4",      # flake8-comprehensions
+    "SIM",     # flake8-simplify
+    "RET",     # flake8-return
+    "PIE",     # flake8-pie
+    "PT",      # flake8-pytest-style
+    "TC",      # flake8-type-checking
+    "ARG",     # flake8-unused-arguments
+    "PTH",     # flake8-use-pathlib
+    "ERA",     # commented-out code
+    "PL",      # pylint
+    "RUF",
+]
+ignore = [
+    # Rule/emitter dispatch naturally has many branches and keyword-only options.
+    "PLR0911",
+    "PLR0912",
+    "PLR0913",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["PLR2004"]
+
+[tool.ruff.format]
+docstring-code-format = true
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+files = ["src", "tests"]
+warn_unreachable = true
+enable_error_code = ["ignore-without-code", "redundant-expr", "truthy-bool"]
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+addopts = ["-ra", "--strict-markers", "--strict-config", "--import-mode=importlib"]
+xfail_strict = true
+filterwarnings = ["error"]
+markers = [
+    "postgres: needs a running PostgreSQL server (DBDELTA_TEST_POSTGRES_URL)",
+]
+
+[tool.coverage.run]
+source = ["dbdelta"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+exclude_also = [
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "@overload",
+]
+
+[tool.importlinter]
+root_package = "dbdelta"
+include_external_packages = true
+
+[[tool.importlinter.contracts]]
+name = "Layers only depend downwards"
+type = "layers"
+layers = [
+    "dbdelta.cli",
+    "dbdelta.emit",
+    "dbdelta.plan | dbdelta.risk",
+    "dbdelta.diff",
+    "dbdelta.model",
+]
+
+[[tool.importlinter.contracts]]
+name = "Loaders only produce the model"
+type = "forbidden"
+source_modules = ["dbdelta.loaders"]
+forbidden_modules = ["dbdelta.diff", "dbdelta.risk", "dbdelta.plan", "dbdelta.emit", "dbdelta.cli"]
+
+[[tool.importlinter.contracts]]
+name = "Core never reads schemas itself"
+type = "forbidden"
+source_modules = ["dbdelta.diff", "dbdelta.risk", "dbdelta.plan", "dbdelta.emit"]
+forbidden_modules = ["dbdelta.loaders"]
+
+[[tool.importlinter.contracts]]
+name = "Core is free of parsing, database and UI libraries"
+type = "forbidden"
+source_modules = [
+    "dbdelta.model",
+    "dbdelta.diff",
+    "dbdelta.risk",
+    "dbdelta.plan",
+    "dbdelta.emit",
+]
+forbidden_modules = ["sqlglot", "sqlalchemy", "typer", "rich"]
