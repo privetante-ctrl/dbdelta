@@ -49,7 +49,7 @@ def load_sqlite(connection: Connection) -> LoadResult:
 
 
 def _table_names(connection: Connection, draft: SchemaDraft) -> list[str]:
-    """List ordinary tables, leaving out virtual tables and the shadow tables behind them."""
+    """List ordinary tables, leaving out views, virtual tables and their shadow tables."""
     try:
         rows = connection.execute(
             text(
@@ -63,8 +63,9 @@ def _table_names(connection: Connection, draft: SchemaDraft) -> list[str]:
     for name, kind in rows:
         if kind == "table":
             tables.append(name)
-        elif kind == "virtual":
-            draft.warn(f"skipped virtual table {name!r}: virtual tables are not supported")
+        elif kind in ("view", "virtual"):
+            what = "view" if kind == "view" else "virtual table"
+            draft.warn(f"skipped {what} {name!r}: it is not supported")
     return tables
 
 

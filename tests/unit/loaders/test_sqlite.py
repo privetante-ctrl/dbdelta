@@ -160,13 +160,16 @@ def test_constraint_names_come_from_the_stored_ddl(live_sqlite: LiveSQLite) -> N
     assert child.indexes == (Index("ix", (IndexElement("a", descending=True),)),)
 
 
-def test_virtual_tables_and_their_shadow_tables_are_skipped(live_sqlite: LiveSQLite) -> None:
+def test_views_and_virtual_tables_are_skipped_with_a_warning(live_sqlite: LiveSQLite) -> None:
     result = live_sqlite(
         "CREATE TABLE docs (id INTEGER PRIMARY KEY, body TEXT);"
         "CREATE VIRTUAL TABLE docs_fts USING fts5(body, content='docs', content_rowid='id');"
+        "CREATE VIEW titles AS SELECT body FROM docs;"
     )
 
+    # The shadow tables behind docs_fts are neither loaded nor reported.
     assert [table.name for table in result.schema.tables] == ["docs"]
     assert result.warnings == (
-        "skipped virtual table 'docs_fts': virtual tables are not supported",
+        "skipped virtual table 'docs_fts': it is not supported",
+        "skipped view 'titles': it is not supported",
     )
