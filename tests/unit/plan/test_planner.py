@@ -7,30 +7,35 @@ from dbdelta.dialects import Dialect
 from dbdelta.diff import (
     AddForeignKey,
     AddTable,
-    Change,
-    describe,
     diff_schemas,
 )
 from dbdelta.loaders import load_ddl
-from dbdelta.plan import plan_migration
+from dbdelta.plan import (
+    Operation,
+    RebuildTable,
+    ReplaceEnum,
+    describe_operation,
+    plan_migration,
+)
 from dbdelta.plan.planner import _PHASES
 
 PG = Dialect.POSTGRESQL
 SQLITE = Dialect.SQLITE
 
 
-def plan(before: str, after: str, dialect: Dialect = PG) -> list[Change]:
+def plan(before: str, after: str, dialect: Dialect = PG) -> list[Operation]:
     source = load_ddl(before, dialect).schema
     target = load_ddl(after, dialect).schema
-    return list(plan_migration(diff_schemas(source, target, dialect), source, dialect).operations)
+    changes = diff_schemas(source, target, dialect)
+    return list(plan_migration(changes, source, target, dialect).operations)
 
 
 def steps(before: str, after: str, dialect: Dialect = PG) -> list[str]:
-    return [describe(operation) for operation in plan(before, after, dialect)]
+    return [describe_operation(operation) for operation in plan(before, after, dialect)]
 
 
-def test_every_change_type_has_a_phase() -> None:
-    assert set(get_args(Change)) == set(_PHASES)
+def test_every_operation_type_has_a_phase() -> None:
+    assert set(get_args(Operation)) == set(_PHASES)
 
 
 def test_no_changes_make_an_empty_plan() -> None:
@@ -71,8 +76,8 @@ def test_operations_run_in_phases() -> None:
         "drop default of users.name",
         "change type of users.m from old_mood to new_mood",
         "change type of users.name from text to varchar(10)",
-        "set default of users.name to 'y'",
         "make users.name NOT NULL",
+        "set default of users.name to 'y'",
         'add check constraint on users ("id" >= 0)',
         "add unique constraint on users (email)",
         "create index ix_email on users (email)",
@@ -108,7 +113,7 @@ def cycle_ddl() -> str:
 def test_cyclic_foreign_keys_are_added_after_the_tables_in_postgresql() -> None:
     operations = plan("", cycle_ddl())
 
-    assert [describe(operation) for operation in operations] == [
+    assert [describe_operation(operation) for operation in operations] == [
         "create table a",
         "create table b",
         "add foreign key a (b_id) -> b (id)",
@@ -124,7 +129,10 @@ def test_cyclic_foreign_keys_are_added_after_the_tables_in_postgresql() -> None:
 def test_cyclic_foreign_keys_stay_inline_in_sqlite() -> None:
     operations = plan("", cycle_ddl(), SQLITE)
 
-    assert [describe(operation) for operation in operations] == ["create table a", "create table b"]
+    assert [describe_operation(operation) for operation in operations] == [
+        "create table a",
+        "create table b",
+    ]
     assert all(
         isinstance(operation, AddTable) and operation.table.foreign_keys for operation in operations
     )
@@ -162,10 +170,7 @@ def test_foreign_keys_are_rebuilt_around_a_replaced_key_in_postgresql() -> None:
         "add primary key users_pkey on users (id)",
         "add foreign key orders (user_id) -> users (id)",
     ]
-    assert steps(before, after, SQLITE) == [
-        "drop primary key users_pk on users (id)",
-        "add primary key users_pkey on users (id)",
-    ]
+    assert steps(before, after, SQLITE) == ["rebuild table users"]
 
 
 def test_foreign_keys_are_rebuilt_around_a_replaced_unique_index() -> None:
@@ -195,10 +200,7 @@ def test_new_table_waits_for_a_key_added_to_an_existing_table() -> None:
         "add unique constraint on orgs (code)",
         "add foreign key members (org_code) -> orgs (code)",
     ]
-    assert steps(before, after, SQLITE) == [
-        "create table members",
-        "add unique constraint on orgs (code)",
-    ]
+    assert steps(before, after, SQLITE) == ["create table members", "rebuild table orgs"]
 
 
 def test_foreign_keys_to_existing_keys_stay_inline() -> None:
@@ -256,7 +258,10 @@ def test_plan_does_not_depend_on_the_order_of_changes() -> None:
     random.Random(7).shuffle(shuffled)
 
     assert shuffled != changes
-    assert plan_migration(shuffled, source, PG) == plan_migration(changes, source, PG)
+    target = load_ddl(after, PG).schema
+    assert plan_migration(shuffled, source, target, PG) == plan_migration(
+        changes, source, target, PG
+    )
 
 
 def test_sqlite_matches_referenced_tables_case_insensitively() -> None:
@@ -266,8 +271,124 @@ def test_sqlite_matches_referenced_tables_case_insensitively() -> None:
         SQLITE,
     )
 
-    assert [describe(operation) for operation in operations] == [
+    assert [describe_operation(operation) for operation in operations] == [
         "create table Parent",
         "create table child",
     ]
     assert not any(isinstance(operation, AddForeignKey) for operation in operations)
+
+
+@pytest.mark.parametrize(
+    ("after", "expected"),
+    [
+        (
+            "CREATE TABLE t (id INTEGER PRIMARY KEY, a TEXT, b INT DEFAULT 0, c TEXT);"
+            "CREATE INDEX ix_a ON t (a)",
+            ["add column t.b integer DEFAULT 0", "add column t.c text"],
+        ),
+        (
+            "CREATE TABLE t (id INTEGER PRIMARY KEY, a TEXT, b INT NOT NULL DEFAULT 0);"
+            "CREATE INDEX ix_a ON t (a)",
+            ["add column t.b integer NOT NULL DEFAULT 0"],
+        ),
+        (
+            "CREATE TABLE t (id INTEGER PRIMARY KEY)",
+            ["drop index ix_a on t (a)", "drop column t.a"],
+        ),
+        (
+            "CREATE TABLE t (id INTEGER PRIMARY KEY, a TEXT); CREATE INDEX ix_a ON t (a DESC)",
+            ["drop index ix_a on t (a)", "create index ix_a on t (a DESC)"],
+        ),
+    ],
+)
+def test_sqlite_alters_in_place_what_alter_table_supports(after: str, expected: list[str]) -> None:
+    before = "CREATE TABLE t (id INTEGER PRIMARY KEY, a TEXT); CREATE INDEX ix_a ON t (a)"
+
+    assert steps(before, after, SQLITE) == expected
+
+
+@pytest.mark.parametrize(
+    "after",
+    [
+        "CREATE TABLE t (id INTEGER PRIMARY KEY, a INT)",
+        "CREATE TABLE t (id INTEGER PRIMARY KEY, a TEXT NOT NULL)",
+        "CREATE TABLE t (id INTEGER PRIMARY KEY, a TEXT DEFAULT 'x')",
+        "CREATE TABLE t (id INTEGER PRIMARY KEY, a TEXT UNIQUE)",
+        "CREATE TABLE t (id INTEGER PRIMARY KEY, a TEXT CHECK (a <> ''))",
+        "CREATE TABLE t (id INTEGER PRIMARY KEY, a TEXT REFERENCES t)",
+        "CREATE TABLE t (id INTEGER PRIMARY KEY AUTOINCREMENT, a TEXT)",
+        "CREATE TABLE t (id INTEGER, a TEXT)",
+        "CREATE TABLE t (id INTEGER PRIMARY KEY, a TEXT, b INT NOT NULL)",
+        "CREATE TABLE t (id INTEGER PRIMARY KEY, a TEXT, b TEXT DEFAULT CURRENT_TIMESTAMP)",
+    ],
+)
+def test_sqlite_rebuilds_tables_it_cannot_alter(after: str) -> None:
+    before = "CREATE TABLE t (id INTEGER PRIMARY KEY, a TEXT)"
+
+    operations = plan(before, after, SQLITE)
+
+    assert len(operations) == 1
+    rebuild = operations[0]
+    assert isinstance(rebuild, RebuildTable)
+    assert rebuild.old == load_ddl(before, SQLITE).schema.tables[0]
+    assert rebuild.new == load_ddl(after, SQLITE).schema.tables[0]
+    assert rebuild.changes
+
+
+def test_a_rebuild_absorbs_index_changes_of_its_table() -> None:
+    before = "CREATE TABLE t (a INT, b INT); CREATE INDEX ix ON t (a)"
+    after = "CREATE TABLE t (a TEXT, b INT); CREATE INDEX ix2 ON t (b)"
+
+    assert steps(before, after, SQLITE) == ["rebuild table t"]
+
+
+def test_extending_an_enum_adds_values_in_place() -> None:
+    operations = plan(
+        "CREATE TYPE mood AS ENUM ('sad', 'happy')",
+        "CREATE TYPE mood AS ENUM ('sad', 'ok', 'happy', 'great')",
+    )
+
+    assert [type(operation).__name__ for operation in operations] == ["AlterEnum"]
+
+
+def test_removing_enum_values_recreates_the_type_and_its_columns() -> None:
+    before = """
+        CREATE TYPE mood AS ENUM ('sad', 'ok', 'happy');
+        CREATE TABLE t (a mood, b mood DEFAULT 'ok', c text, gone mood);
+        CREATE TABLE u (m mood);
+    """
+    after = """
+        CREATE TYPE mood AS ENUM ('happy', 'sad');
+        CREATE TABLE t (a mood, b mood DEFAULT 'sad', c text);
+    """
+
+    operations = plan(before, after)
+
+    replace = next(operation for operation in operations if isinstance(operation, ReplaceEnum))
+    assert replace.new.values == ("happy", "sad")
+    assert [(table, column.name, column.default) for table, column in replace.columns] == [
+        ("t", "a", None),
+        ("t", "b", "'sad'"),
+    ]
+    order = [describe_operation(operation) for operation in operations]
+    assert order.index("drop column t.gone") < order.index(describe_operation(replace))
+    assert order.index("drop table u") < order.index(describe_operation(replace))
+
+
+@pytest.mark.parametrize(
+    ("before", "after", "expected"),
+    [
+        (
+            "CREATE TABLE t (a int)",
+            "CREATE TABLE t (a int GENERATED ALWAYS AS IDENTITY)",
+            ["make t.a NOT NULL", "change identity of t.a from none to always"],
+        ),
+        (
+            "CREATE TABLE t (a int GENERATED ALWAYS AS IDENTITY)",
+            "CREATE TABLE t (a int)",
+            ["change identity of t.a from always to none", "allow NULL in t.a"],
+        ),
+    ],
+)
+def test_identity_changes_respect_not_null(before: str, after: str, expected: list[str]) -> None:
+    assert steps(before, after) == expected

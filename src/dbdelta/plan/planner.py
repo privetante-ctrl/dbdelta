@@ -8,10 +8,10 @@ depend on tables, columns and keys all being in place:
 2. drop indexes, CHECK, UNIQUE and primary key constraints
 3. drop columns
 4. drop tables, dependents first
-5. create and alter enum types
+5. create, extend and recreate enum types
 6. create tables, referenced tables first
 7. add columns
-8. alter columns
+8. alter columns, or rebuild tables where ALTER TABLE cannot change them
 9. add primary key, UNIQUE and CHECK constraints
 10. create indexes
 11. add foreign keys
@@ -21,12 +21,17 @@ In dialects that check foreign keys in DDL, foreign keys that form a cycle betwe
 tables are split off into step 11, and foreign keys that depend on a key being replaced
 are dropped in step 1 and added back in step 11. A column whose type and default both
 change loses its old default before the type changes.
+
+In dialects whose ALTER TABLE cannot change column definitions or constraints (SQLite),
+all changes to such a table become one :class:`RebuildTable`. An enum type whose values
+are not simply extended becomes a :class:`ReplaceEnum`.
 """
 
 from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass, replace
 
 from dbdelta.dialects import Dialect, name_key
+from dbdelta.dialects.sqlite import can_add_column
 from dbdelta.diff import (
     AddCheck,
     AddColumn,
@@ -53,10 +58,10 @@ from dbdelta.diff import (
     ReorderColumns,
     SetDefault,
     SetNotNull,
-    describe,
 )
-from dbdelta.model import ForeignKey, Index, Schema, Table
+from dbdelta.model import Column, EnumType, ForeignKey, Index, Schema, Table
 from dbdelta.plan.graph import order_by_dependencies
+from dbdelta.plan.operations import Operation, RebuildTable, ReplaceEnum, describe_operation
 
 _PHASES: dict[type, int] = {
     DropForeignKey: 1,
@@ -68,6 +73,7 @@ _PHASES: dict[type, int] = {
     DropTable: 4,
     AddEnum: 5,
     AlterEnum: 5,
+    ReplaceEnum: 5,
     AddTable: 6,
     AddColumn: 7,
     DropDefault: 8,
@@ -77,24 +83,13 @@ _PHASES: dict[type, int] = {
     SetDefault: 8,
     SetNotNull: 8,
     ReorderColumns: 8,
+    RebuildTable: 8,
     AddPrimaryKey: 9,
     AddUnique: 9,
     AddCheck: 9,
     AddIndex: 10,
     AddForeignKey: 11,
     DropEnum: 12,
-}
-
-# Within one column: a default must go before the type changes under it, and NOT NULL is
-# enforced last, once the type and default are final.
-_COLUMN_STEPS: dict[type, int] = {
-    DropDefault: 1,
-    DropNotNull: 2,
-    AlterColumnType: 3,
-    AlterIdentity: 4,
-    SetDefault: 5,
-    SetNotNull: 6,
-    ReorderColumns: 7,
 }
 
 _KeyRef = tuple[str, frozenset[str]]
@@ -104,12 +99,18 @@ _KeyRef = tuple[str, frozenset[str]]
 class MigrationPlan:
     """The operations of a migration, in an order in which they can be executed."""
 
-    operations: tuple[Change, ...]
+    operations: tuple[Operation, ...]
+    source: Schema
+    target: Schema
+    dialect: Dialect
 
 
-def plan_migration(changes: Iterable[Change], source: Schema, dialect: Dialect) -> MigrationPlan:
-    """Order ``changes``, which turn ``source`` into a target schema, for execution."""
-    return MigrationPlan(tuple(_Planner(dialect).plan(list(changes), source)))
+def plan_migration(
+    changes: Iterable[Change], source: Schema, target: Schema, dialect: Dialect
+) -> MigrationPlan:
+    """Order ``changes``, which turn ``source`` into ``target``, for execution."""
+    operations = _Planner(dialect).plan(list(changes), source, target)
+    return MigrationPlan(tuple(operations), source, target, dialect)
 
 
 class _Planner:
@@ -117,7 +118,7 @@ class _Planner:
         self._dialect = dialect
         self._checks_foreign_keys = dialect.traits.checks_foreign_keys_in_ddl
 
-    def plan(self, changes: list[Change], source: Schema) -> Iterator[Change]:
+    def plan(self, changes: list[Change], source: Schema, target: Schema) -> Iterator[Operation]:
         changes += self._release_replaced_defaults(changes)
         if self._checks_foreign_keys:
             changes += self._rebuild_foreign_keys_on_replaced_keys(changes, source)
@@ -130,16 +131,19 @@ class _Planner:
         drop_order, cycle_foreign_keys = self._drop_order(dropped)
         create_order, deferred_foreign_keys = self._create_order(added, changes)
         others += cycle_foreign_keys + deferred_foreign_keys
+        operations = self._replace_enums(others, source, target)
+        if not self._dialect.traits.alters_table_definitions:
+            operations = self._rebuild_tables(operations, source, target)
 
-        phases: dict[int, list[Change]] = {phase: [] for phase in _PHASES.values()}
-        for change in sorted(others, key=self._position):
-            phases[_PHASES[type(change)]].append(change)
+        phases: dict[int, list[Operation]] = {phase: [] for phase in _PHASES.values()}
+        for operation in sorted(operations, key=self._position):
+            phases[_PHASES[type(operation)]].append(operation)
         phases[_PHASES[DropTable]] = drop_order
         phases[_PHASES[AddTable]] = create_order
         for phase in sorted(phases):
             yield from phases[phase]
 
-    def _drop_order(self, dropped: Sequence[DropTable]) -> tuple[list[Change], list[Change]]:
+    def _drop_order(self, dropped: Sequence[DropTable]) -> tuple[list[Operation], list[Change]]:
         """Order dropped tables so that referencing tables go before referenced ones."""
         tables = {self._key(change.table.name): change for change in dropped}
         order = order_by_dependencies(
@@ -158,7 +162,7 @@ class _Planner:
 
     def _create_order(
         self, added: Sequence[AddTable], changes: Sequence[Change]
-    ) -> tuple[list[Change], list[Change]]:
+    ) -> tuple[list[Operation], list[Change]]:
         """Order new tables so that referenced tables are created first.
 
         Where the dialect checks foreign keys in DDL, a foreign key is created separately
@@ -172,7 +176,7 @@ class _Planner:
             return [AddTable(tables[key]) for key in order.order], []
 
         later_keys = self._created_keys(changes)
-        creates: list[Change] = []
+        creates: list[Operation] = []
         deferred: list[Change] = []
         for key in order.order:
             table = tables[key]
@@ -216,6 +220,70 @@ class _Planner:
                     rebuilt += [DropForeignKey(table.name, fk), AddForeignKey(table.name, fk)]
         return rebuilt
 
+    def _replace_enums(
+        self, changes: Sequence[Change], source: Schema, target: Schema
+    ) -> list[Operation]:
+        """Turn enum changes that do more than add values into :class:`ReplaceEnum`."""
+        operations: list[Operation] = []
+        for change in changes:
+            if isinstance(change, AlterEnum) and not _extends(change.old, change.new):
+                columns = self._enum_columns(change.old, source, target)
+                operations.append(ReplaceEnum(change.old, change.new, columns))
+            else:
+                operations.append(change)
+        return operations
+
+    def _enum_columns(
+        self, enum: EnumType, source: Schema, target: Schema
+    ) -> tuple[tuple[str, Column], ...]:
+        """Existing columns that use ``enum`` before and after the migration."""
+        uses: list[tuple[str, Column]] = []
+        for old_table in source.tables:
+            new_table = self._find_table(target, old_table.name)
+            if new_table is None:
+                continue
+            for column in new_table.columns:
+                old_column = self._find_column(old_table, column.name)
+                if (
+                    old_column is not None
+                    and self._key(old_column.type.name) == self._key(enum.name)
+                    and self._key(column.type.name) == self._key(enum.name)
+                ):
+                    uses.append((old_table.name, column))
+        return tuple(uses)
+
+    def _rebuild_tables(
+        self, operations: Sequence[Operation], source: Schema, target: Schema
+    ) -> list[Operation]:
+        """Replace the changes to a table that ALTER TABLE cannot make by a rebuild."""
+        by_table: dict[str, list[Change]] = {}
+        for operation in operations:
+            if isinstance(operation, _TABLE_CHANGES):
+                by_table.setdefault(self._key(operation.table), []).append(operation)
+
+        rebuilt: dict[str, RebuildTable] = {}
+        for key, changes in by_table.items():
+            if all(_alters_in_place(change) for change in changes):
+                continue
+            old, new = self._find_table(source, key), self._find_table(target, key)
+            if old is not None and new is not None:
+                rebuilt[key] = RebuildTable(old, new, tuple(changes))
+
+        result: list[Operation] = [
+            operation
+            for operation in operations
+            if not (isinstance(operation, _TABLE_CHANGES) and self._key(operation.table) in rebuilt)
+        ]
+        return result + list(rebuilt.values())
+
+    def _find_table(self, schema: Schema, name: str) -> Table | None:
+        key = self._key(name)
+        return next((table for table in schema.tables if self._key(table.name) == key), None)
+
+    def _find_column(self, table: Table, name: str) -> Column | None:
+        key = self._key(name)
+        return next((column for column in table.columns if self._key(column.name) == key), None)
+
     def _release_replaced_defaults(self, changes: Sequence[Change]) -> list[Change]:
         """Drop the old default of a column whose type and default both change.
 
@@ -255,21 +323,87 @@ class _Planner:
     def _key(self, name: str) -> str:
         return name_key(name, self._dialect)
 
-    def _position(self, change: Change) -> tuple[str, int, str]:
-        return (self._key(_subject(change)), _COLUMN_STEPS.get(type(change), 0), describe(change))
+    def _position(self, operation: Operation) -> tuple[str, int, str]:
+        return (
+            self._key(_subject(operation)),
+            _column_step(operation),
+            describe_operation(operation),
+        )
 
 
-def _subject(change: Change) -> str:
-    """Name of the table or enum type a change applies to."""
-    match change:
+_TABLE_CHANGES = (
+    AddColumn,
+    DropColumn,
+    AlterColumnType,
+    SetNotNull,
+    DropNotNull,
+    SetDefault,
+    DropDefault,
+    AlterIdentity,
+    ReorderColumns,
+    AddPrimaryKey,
+    DropPrimaryKey,
+    AddForeignKey,
+    DropForeignKey,
+    AddUnique,
+    DropUnique,
+    AddCheck,
+    DropCheck,
+    AddIndex,
+    DropIndex,
+)
+
+
+def _alters_in_place(change: Change) -> bool:
+    """Tell whether SQLite's limited ALTER TABLE can make ``change``."""
+    if isinstance(change, AddColumn):
+        return can_add_column(change.column)
+    return isinstance(change, DropColumn | AddIndex | DropIndex)
+
+
+def _extends(old: EnumType, new: EnumType) -> bool:
+    """Tell whether ``new`` only adds values to ``old``, keeping their order."""
+    remaining = iter(new.values)
+    return all(value in remaining for value in old.values)
+
+
+def _column_step(operation: Operation) -> int:
+    """Order of the changes to one column.
+
+    A default goes before the type changes under it, and NOT NULL is enforced once the type
+    is final. PostgreSQL requires NOT NULL before a column becomes an identity column and
+    refuses to drop NOT NULL while it still is one.
+    """
+    match operation:
+        case AlterIdentity(new=None):
+            return 0
+        case DropDefault():
+            return 1
+        case DropNotNull():
+            return 2
+        case AlterColumnType():
+            return 3
+        case SetNotNull():
+            return 4
+        case AlterIdentity():
+            return 5
+        case SetDefault():
+            return 6
+        case _:
+            return 7
+
+
+def _subject(operation: Operation) -> str:
+    """Name of the table or enum type an operation applies to."""
+    match operation:
         case AddEnum(enum) | DropEnum(enum):
             return enum.name
-        case AlterEnum(old, _):
+        case AlterEnum(old, _) | ReplaceEnum(old, _, _):
             return old.name
-        case AddTable(table) | DropTable(table):
+        case AddTable(table) | DropTable(table) | RebuildTable(table, _, _):
             return table.name
         case _:
-            return change.table
+            return operation.table
 
 
 def _key_columns(change: Change) -> list[tuple[str, ...]]:
