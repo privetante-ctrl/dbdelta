@@ -3,10 +3,10 @@
 from typing import ClassVar
 
 from dbdelta.dialects import Dialect, name_key
+from dbdelta.dialects.quoting import quote_identifier
 from dbdelta.dialects.sqlite import is_constant
 from dbdelta.diff import AddColumn, AddIndex, AddTable, DropColumn, DropIndex, DropTable, describe
 from dbdelta.emit.base import EmitOptions, Emitter, index_key_names
-from dbdelta.emit.quoting import quote_identifier
 from dbdelta.emit.script import Block, Script, Statement
 from dbdelta.model import Column, DataType, Identity, Index, PrimaryKey, Table
 from dbdelta.plan import MigrationPlan, Operation, RebuildTable, describe_operation

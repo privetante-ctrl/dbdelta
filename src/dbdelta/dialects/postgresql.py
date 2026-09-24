@@ -2,7 +2,7 @@
 
 from collections.abc import Sequence
 
-from dbdelta.model import DataType
+from dbdelta.model import DataType, Index, Schema
 
 MAX_NAME_BYTES = 63
 """Longest identifier PostgreSQL keeps (NAMEDATALEN - 1); longer names are truncated."""
@@ -99,6 +99,18 @@ def needs_explicit_cast(old: DataType, new: DataType) -> bool:
     if old.name in _NUMERIC_TYPES and new.name in _NUMERIC_TYPES:
         return False
     return (old.name, new.name) not in _DATETIME_CASTS
+
+
+def backs_foreign_key(schema: Schema, table: str, index: Index) -> bool:
+    """Tell whether a foreign key in ``schema`` relies on the unique index ``index``."""
+    if not index.unique or index.where is not None:
+        return False
+    columns = frozenset(str(element.key) for element in index.elements)
+    return any(
+        fk.ref_table == table and frozenset(fk.ref_columns) == columns
+        for candidate in schema.tables
+        for fk in candidate.foreign_keys
+    )
 
 
 def is_builtin(data_type: DataType) -> bool:

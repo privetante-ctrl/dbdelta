@@ -1,5 +1,5 @@
+from dbdelta.dialects.quoting import quote_identifier, quote_literal, quote_qualified
 from dbdelta.emit import Block, Script, Statement
-from dbdelta.emit.quoting import quote_identifier, quote_literal, quote_qualified
 
 
 def test_identifiers_are_always_quoted_and_escaped() -> None:

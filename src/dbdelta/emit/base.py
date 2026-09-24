@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import ClassVar
 
 from dbdelta.dialects import Dialect
-from dbdelta.emit.quoting import quote_identifier, quote_qualified
+from dbdelta.dialects.quoting import quote_identifier, quote_qualified
 from dbdelta.emit.script import Script
 from dbdelta.model import (
     CheckConstraint,

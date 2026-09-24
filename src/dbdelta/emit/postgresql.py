@@ -3,7 +3,13 @@
 from typing import ClassVar, assert_never
 
 from dbdelta.dialects import Dialect, name_key
-from dbdelta.dialects.postgresql import default_name, is_builtin, needs_explicit_cast
+from dbdelta.dialects.postgresql import (
+    backs_foreign_key,
+    default_name,
+    is_builtin,
+    needs_explicit_cast,
+)
+from dbdelta.dialects.quoting import quote_identifier, quote_literal, quote_qualified
 from dbdelta.diff import (
     AddCheck,
     AddColumn,
@@ -31,7 +37,6 @@ from dbdelta.diff import (
     SetNotNull,
 )
 from dbdelta.emit.base import EmitOptions, Emitter, index_key_names
-from dbdelta.emit.quoting import quote_identifier, quote_literal, quote_qualified
 from dbdelta.emit.script import Block, Script, Statement
 from dbdelta.model import (
     CheckConstraint,
@@ -302,7 +307,7 @@ class PostgresEmitter(Emitter):
             schema, table, index = plan.source, operation.table, operation.index
         else:
             return False
-        return not _backs_foreign_key(schema, table, index)
+        return not backs_foreign_key(schema, table, index)
 
     def _key_name(self, table: str, key: PrimaryKey) -> str:
         return key.name or default_name(table, [], "pkey")
@@ -351,14 +356,3 @@ def _column_type(schema: Schema, table: str, column: str) -> DataType:
             if found is not None:
                 return found.type
     return DataType("integer")
-
-
-def _backs_foreign_key(schema: Schema, table: str, index: Index) -> bool:
-    if not index.unique or index.where is not None:
-        return False
-    columns = frozenset(str(element.key) for element in index.elements)
-    return any(
-        fk.ref_table == table and frozenset(fk.ref_columns) == columns
-        for candidate in schema.tables
-        for fk in candidate.foreign_keys
-    )

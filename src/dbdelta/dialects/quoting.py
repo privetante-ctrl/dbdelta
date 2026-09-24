@@ -1,4 +1,4 @@
-"""Quoting of identifiers and literals.
+"""Quoting of identifiers and literals, the same in PostgreSQL and SQLite.
 
 Every name and value that reaches generated SQL goes through these functions; nothing is
 concatenated into SQL unquoted.
