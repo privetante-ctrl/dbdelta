@@ -84,11 +84,6 @@ def test_unsupported_url_scheme_is_an_error() -> None:
         dialect_from_url("mysql://localhost/app")
 
 
-def test_live_postgresql_is_not_supported_yet() -> None:
-    with pytest.raises(LoadError, match="not supported yet"):
-        load_database("postgresql://localhost/app")
-
-
 def test_load_source_dispatches_on_urls_and_files(database: Path, tmp_path: Path) -> None:
     ddl = tmp_path / "schema.sql"
     ddl.write_text("CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT NOT NULL);")

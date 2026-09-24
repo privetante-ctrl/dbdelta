@@ -17,14 +17,13 @@ import sqlglot
 from sqlglot import exp
 from sqlglot.errors import ParseError
 
-from dbdelta.dialects import Dialect, ascii_lower
+from dbdelta.dialects import Dialect, ascii_lower, name_key
 from dbdelta.loaders._draft import ForeignKeyDraft, SchemaDraft, TableDraft
 from dbdelta.loaders._sqlglot import WITHOUT_ROWID, sqlglot_dialect
 from dbdelta.loaders.base import LoadError, LoadResult
 from dbdelta.loaders.normalize import normalize_default, normalize_expression
 from dbdelta.loaders.types import (
     canonical_type,
-    default_schema,
     fold_identifier,
     serial_type,
 )
@@ -56,6 +55,8 @@ _IGNORED_STATEMENTS = (
     exp.Revoke,
     exp.Use,
     exp.Analyze,
+    # A trailing comment after the last statement, such as pg_dump's "dump complete".
+    exp.Semicolon,
 )
 
 _REFERENTIAL_ACTION = re.compile(
@@ -70,24 +71,45 @@ _DEFAULT_FK_OPTIONS = frozenset({"NOT DEFERRABLE", "INITIALLY IMMEDIATE", "MATCH
 
 _DEFAULT_INDEX_METHODS = {Dialect.POSTGRESQL: "btree"}
 
+# psql meta-commands such as \\restrict, which recent pg_dump versions write.
+_PSQL_COMMAND = re.compile(r"^\\\S.*$", re.MULTILINE)
+
+_IDENTIFIER = r'(?:"(?:[^"]|"")+"|[A-Za-z_][\w$]*)'
+_QUALIFIED = rf"{_IDENTIFIER}(?:\s*\.\s*{_IDENTIFIER})*"
+_SEQUENCE_OWNER = re.compile(
+    rf"SEQUENCE\s+(?P<sequence>{_QUALIFIED})\s+OWNED\s+BY\s+(?P<column>{_QUALIFIED})\s*$",
+    re.IGNORECASE,
+)
+_ADD_IDENTITY = re.compile(
+    rf"TABLE\s+(?:ONLY\s+)?(?P<table>{_QUALIFIED})\s+ALTER\s+COLUMN\s+(?P<column>{_IDENTIFIER})"
+    r"\s+ADD\s+GENERATED\s+(?P<kind>ALWAYS|BY\s+DEFAULT)\s+AS\s+IDENTITY\b",
+    re.IGNORECASE,
+)
+
 _SNIPPET_LENGTH = 70
 
 
-def load_ddl(sql: str, dialect: Dialect) -> LoadResult:
-    """Build a schema from DDL text written in ``dialect``."""
-    draft = SchemaDraft(dialect)
-    DdlReader(draft).read(sql)
+def load_ddl(sql: str, dialect: Dialect, schema: str | None = None) -> LoadResult:
+    """Build a schema from DDL text written in ``dialect``.
+
+    ``schema`` names the schema to load when the DDL qualifies object names with it, as
+    ``pg_dump`` does; by default it is ``public`` in PostgreSQL.
+    """
+    draft = SchemaDraft(dialect, schema)
+    reader = DdlReader(draft)
+    reader.read(sql)
+    reader.finish()
     return draft.build()
 
 
-def load_ddl_file(path: Path, dialect: Dialect) -> LoadResult:
+def load_ddl_file(path: Path, dialect: Dialect, schema: str | None = None) -> LoadResult:
     """Build a schema from a ``.sql`` file written in ``dialect``."""
     try:
         sql = path.read_text(encoding="utf-8")
     except OSError as error:
         raise LoadError(f"cannot read {path}: {error.strerror}") from error
     try:
-        return load_ddl(sql, dialect)
+        return load_ddl(sql, dialect, schema)
     except LoadError as error:
         raise LoadError(f"{path}: {error}") from error
 
@@ -99,16 +121,57 @@ class DdlReader:
         self._draft = draft
         self._dialect = draft.dialect
         self._sqlglot = sqlglot_dialect(draft.dialect)
+        # A serial column in a dump is a nextval() default on a sequence the column owns.
+        self._sequences: dict[str, str] = {}
+        self._sequence_defaults: dict[str, tuple[str, str]] = {}
+        self._sequence_owners: dict[str, tuple[str, str]] = {}
 
     def read(self, sql: str) -> None:
         """Parse ``sql`` and apply each of its statements in order."""
         try:
-            statements = sqlglot.parse(sql, dialect=self._sqlglot)
+            statements = sqlglot.parse(_PSQL_COMMAND.sub("", sql), dialect=self._sqlglot)
         except ParseError as error:
             raise LoadError(_describe_parse_error(error)) from error
         for statement in statements:
             if statement is not None:
-                self._statement(statement)
+                self._statement(self._unqualify(statement))
+
+    def _unqualify(self, statement: exp.Expr) -> exp.Expr:
+        """Drop the loaded schema from qualified names, as pg_dump writes every name.
+
+        Names in other schemas keep their qualifier, so they are skipped or kept qualified.
+        """
+
+        def strip(node: exp.Expr) -> exp.Expr:
+            if isinstance(node, exp.Table) and node.args.get("catalog") is None:
+                schema = node.args.get("db")
+                if isinstance(schema, exp.Identifier) and self._in_loaded_schema(schema):
+                    node = node.copy()
+                    node.set("db", None)
+            elif (
+                isinstance(node, exp.DataType)
+                and isinstance(node.args.get("kind"), exp.Dot)
+                and isinstance(node.args["kind"].this, exp.Identifier)
+                and self._in_loaded_schema(node.args["kind"].this)
+            ):
+                node = node.copy()
+                node.set("kind", node.args["kind"].expression)
+            return node
+
+        return statement.transform(strip)
+
+    def finish(self) -> None:
+        """Turn sequence-backed defaults into serial columns once every statement is read."""
+        for sequence, (table_name, column_name) in self._sequence_defaults.items():
+            if self._sequence_owners.get(sequence) != (table_name, column_name):
+                continue
+            table = self._draft.table(table_name)
+            column = table.find_column(column_name) if table is not None else None
+            if table is not None and column is not None:
+                table.replace_column(replace(column, default=None, identity=Identity.SERIAL))
+        for sequence, name in self._sequences.items():
+            if sequence not in self._sequence_owners:
+                self._draft.warn(f"skipped sequence {name!r}: sequences are not supported")
 
     def _statement(self, statement: exp.Expr) -> None:
         if isinstance(statement, exp.Create):
@@ -118,15 +181,74 @@ class DdlReader:
         elif isinstance(statement, exp.Drop):
             self._drop(statement)
         elif isinstance(statement, exp.Command):
-            if statement.this.upper() in ("CREATE", "ALTER", "DROP") and not _OWNERSHIP.search(
-                statement.expression
-            ):
-                self._skip(statement, "this statement is not supported")
+            self._command(statement)
         elif not isinstance(statement, _IGNORED_STATEMENTS):
             self._skip(statement, "this statement is not supported")
 
+    def _command(self, statement: exp.Command) -> None:
+        """Handle statements sqlglot does not parse, of which pg_dump writes a few."""
+        verb, text = statement.this.upper(), str(statement.expression).strip()
+        if verb == "ALTER" and (owner := _SEQUENCE_OWNER.match(text)):
+            self._own_sequence(owner["sequence"], owner["column"])
+        elif verb == "ALTER" and (identity := _ADD_IDENTITY.match(text)):
+            self._add_identity(statement, identity)
+        elif verb in ("CREATE", "ALTER", "DROP") and not _OWNERSHIP.search(text):
+            self._skip(statement, "this statement is not supported")
+
+    def _own_sequence(self, sequence: str, column: str) -> None:
+        *table, column_name = self._parts(column)
+        if len(table) > 1 and not self._in_loaded_schema(exp.to_identifier(table[-2])):
+            return
+        if table:
+            self._sequence_owners[self._sequence_key(sequence)] = (table[-1], column_name)
+
+    def _add_identity(self, statement: exp.Command, match: re.Match[str]) -> None:
+        *schema, table_name = self._parts(match["table"])
+        if schema and not self._in_loaded_schema(exp.to_identifier(schema[-1])):
+            return
+        table = self._draft.table(table_name)
+        column = table.find_column(self._parts(match["column"])[0]) if table else None
+        if table is None or column is None:
+            raise LoadError(f"cannot apply {_snippet(statement)}: unknown table or column")
+        kind = Identity.ALWAYS if match["kind"].upper() == "ALWAYS" else Identity.BY_DEFAULT
+        table.replace_column(replace(column, identity=kind, nullable=False))
+
+    def _parts(self, qualified: str) -> list[str]:
+        """Split and fold a possibly quoted, dotted name the way the database would."""
+        parts = re.findall(_IDENTIFIER, qualified)
+        return [
+            fold_identifier(
+                exp.to_identifier(part[1:-1].replace('""', '"'), quoted=True)
+                if part.startswith('"')
+                else exp.to_identifier(part),
+                self._dialect,
+            )
+            for part in parts
+        ]
+
+    def _sequence_key(self, qualified: str) -> str:
+        *schema, name = self._parts(qualified)
+        return name_key(name, self._dialect) if len(schema) <= 1 else qualified
+
+    def _record_sequence_default(self, table: str, column: str, default: exp.Expr) -> None:
+        call = default
+        if not (isinstance(call, exp.Anonymous) and str(call.this).lower() == "nextval"):
+            return
+        argument = call.expressions[0] if call.expressions else None
+        while isinstance(argument, exp.Cast | exp.Paren):
+            argument = argument.this
+        if isinstance(argument, exp.Literal) and argument.is_string:
+            self._sequence_defaults[self._sequence_key(argument.this)] = (table, column)
+
     def _create(self, statement: exp.Create) -> None:
         kind = str(statement.args.get("kind", "")).upper()
+        if kind == "SEQUENCE":
+            name = self._object_name(statement.this, statement)
+            if name is not None:
+                self._sequences[name_key(name, self._dialect)] = name
+            return
+        if kind == "SCHEMA":
+            return
         if kind == "TABLE":
             self._create_table(statement)
         elif kind == "INDEX":
@@ -216,6 +338,8 @@ class DdlReader:
                     "is not tracked"
                 )
 
+        if default is not None:
+            self._record_sequence_default(table.name, name, default)
         normalized_default = (
             normalize_default(default, data_type, self._dialect) if default is not None else None
         )
@@ -369,6 +493,7 @@ class DdlReader:
         elif args.get("drop"):
             column = replace(column, default=None)
         elif args.get("default") is not None:
+            self._record_sequence_default(table.name, column.name, args["default"])
             default = normalize_default(args["default"], column.type, self._dialect)
             column = replace(column, default=default)
         else:
@@ -397,24 +522,23 @@ class DdlReader:
         if not isinstance(node, exp.Table):
             raise LoadError(f"cannot find the object name in {_snippet(statement)}")
         schema = node.args.get("db")
-        if node.args.get("catalog") is not None or (
-            schema is not None
-            and ascii_lower(fold_identifier(schema, self._dialect)) != default_schema(self._dialect)
-        ):
-            self._skip(
-                statement, f"only objects in schema {default_schema(self._dialect)!r} are loaded"
-            )
+        if node.args.get("catalog") is not None or not self._in_loaded_schema(schema):
+            self._skip(statement, f"only objects in schema {self._draft.schema!r} are loaded")
             return None
         return fold_identifier(node.this, self._dialect)
 
     def _reference_name(self, node: exp.Table) -> str:
         schema = node.args.get("db")
         name = fold_identifier(node.this, self._dialect)
-        if schema is None or ascii_lower(fold_identifier(schema, self._dialect)) == default_schema(
-            self._dialect
-        ):
+        if schema is None or self._in_loaded_schema(schema):
             return name
         return f"{fold_identifier(schema, self._dialect)}.{name}"
+
+    def _in_loaded_schema(self, schema: exp.Identifier | None) -> bool:
+        if schema is None:
+            return True
+        name = fold_identifier(schema, self._dialect)
+        return name_key(name, self._dialect) == name_key(self._draft.schema, self._dialect)
 
     def _column_list(self, nodes: list[exp.Expr]) -> tuple[str, ...]:
         names: list[str] = []
@@ -434,7 +558,7 @@ class DdlReader:
 
 
 def _snippet(statement: exp.Expr) -> str:
-    text = " ".join(statement.sql().split())
+    text = " ".join(statement.sql(comments=False).split())
     if len(text) > _SNIPPET_LENGTH:
         text = text[: _SNIPPET_LENGTH - 3] + "..."
     return text

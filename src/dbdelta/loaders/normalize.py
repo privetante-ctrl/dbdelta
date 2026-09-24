@@ -78,6 +78,7 @@ def normalize_expression(
     """
     sg_dialect = sqlglot_dialect(dialect)
     node = normalize_identifiers(_unwrap(node.copy()), dialect=sg_dialect)
+    node = _rewrite(node, _drop_regclass_cast)
     if implicit_casts:
         node = _rewrite(node, _drop_implicit_cast)
         node = _rewrite(node, _any_to_in)
@@ -222,6 +223,23 @@ def _drop_implicit_cast(node: exp.Expr) -> exp.Expr:
         isinstance(inner, exp.Column)
         and isinstance(target.this, exp.DataType.Type)
         and target.this.value.lower() in _STRING_CAST_TARGETS
+    ):
+        return inner
+    return node
+
+
+def _drop_regclass_cast(node: exp.Expr) -> exp.Expr:
+    """Turn ``'sequence'::regclass`` back into the plain string literal.
+
+    PostgreSQL resolves a literal passed to ``nextval`` to the sequence when it stores the
+    default and prints it with this cast; either spelling names the same sequence, so the
+    cast is dropped even in defaults.
+    """
+    if (
+        isinstance(node, exp.Cast)
+        and node.to.sql().lower() == "regclass"
+        and isinstance(inner := _unwrap(node.this), exp.Literal)
+        and inner.is_string
     ):
         return inner
     return node

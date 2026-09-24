@@ -325,7 +325,7 @@ def test_statements_that_do_not_change_the_schema_are_ignored_silently() -> None
     ("statement", "reason"),
     [
         ("CREATE VIEW v AS SELECT 1", "CREATE VIEW is not supported"),
-        ("CREATE SEQUENCE s", "CREATE SEQUENCE is not supported"),
+        ("CREATE SEQUENCE s", "sequences are not supported"),
         ("CREATE EXTENSION citext", "this statement is not supported"),
         ("CREATE TYPE pair AS (a int, b int)", "CREATE TYPE is not supported"),
         ("CREATE TEMP TABLE tmp (a int)", "temporary tables are not part of the schema"),

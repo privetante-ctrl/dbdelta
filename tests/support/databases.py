@@ -1,5 +1,6 @@
 """Run migrations against real databases."""
 
+import os
 import sqlite3
 from collections.abc import Iterable
 
@@ -8,8 +9,10 @@ from sqlalchemy import create_engine
 from sqlalchemy.pool import StaticPool
 
 from dbdelta.emit import Script
-from dbdelta.loaders import LoadResult
+from dbdelta.loaders import LoadResult, load_database
 from dbdelta.loaders.sqlite import load_sqlite
+
+POSTGRES_URL_VARIABLE = "DBDELTA_TEST_POSTGRES_URL"
 
 
 def load_sqlite_connection(connection: sqlite3.Connection) -> LoadResult:
@@ -45,3 +48,11 @@ def run_postgres_script(connection: psycopg.Connection, script: Script) -> None:
                 connection.execute(statement.sql)
         if block.transactional:
             connection.execute("COMMIT")
+
+
+def load_postgres_connection(connection: psycopg.Connection) -> LoadResult:
+    """Load the current schema of a test connection through the public loader entry point."""
+    url = os.environ[POSTGRES_URL_VARIABLE]
+    row = connection.execute("SELECT current_schema()").fetchone()
+    assert row is not None
+    return load_database(url, row[0])

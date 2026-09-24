@@ -23,7 +23,9 @@ __all__ = [
 ]
 
 
-def load_source(source: str, dialect: Dialect | None = None) -> LoadResult:
+def load_source(
+    source: str, dialect: Dialect | None = None, schema: str | None = None
+) -> LoadResult:
     """Load a schema from a database URL or from the path of a ``.sql`` file.
 
     A URL determines its own dialect; ``dialect`` is then only checked against it.
@@ -33,7 +35,7 @@ def load_source(source: str, dialect: Dialect | None = None) -> LoadResult:
         url_dialect = dialect_from_url(source)
         if dialect is not None and dialect is not url_dialect:
             raise LoadError(f"{source} is a {url_dialect} database, not {dialect}")
-        return load_database(source)
+        return load_database(source, schema)
     if dialect is None:
         raise LoadError(f"cannot tell which SQL dialect {source} is written in")
-    return load_ddl_file(Path(source), dialect)
+    return load_ddl_file(Path(source), dialect, schema)

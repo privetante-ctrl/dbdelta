@@ -6,7 +6,7 @@ from pathlib import Path
 
 import psycopg
 import pytest
-from tests.support.databases import load_sqlite_connection
+from tests.support.databases import POSTGRES_URL_VARIABLE, load_sqlite_connection
 from tests.support.fixtures import fixture_pairs
 
 from dbdelta.dialects import Dialect
@@ -14,8 +14,6 @@ from dbdelta.loaders import LoadResult
 
 LiveSQLite = Callable[[str], LoadResult]
 Snapshot = Callable[[Path, str], None]
-
-POSTGRES_URL_VARIABLE = "DBDELTA_TEST_POSTGRES_URL"
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:

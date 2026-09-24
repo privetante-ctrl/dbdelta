@@ -1,6 +1,7 @@
 """Result and error types shared by all loaders."""
 
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 
 from dbdelta.model import Schema
 
@@ -11,7 +12,12 @@ class LoadError(Exception):
 
 @dataclass(frozen=True, slots=True)
 class LoadResult:
-    """A loaded schema together with notes about what the loader skipped or ignored."""
+    """A loaded schema together with notes about what the loader skipped or ignored.
+
+    ``row_estimates`` maps table names to approximate row counts when the source can tell;
+    risk rules use them to judge how long locks last and whether data can be lost.
+    """
 
     schema: Schema
     warnings: tuple[str, ...] = ()
+    row_estimates: Mapping[str, int] = field(default_factory=dict)

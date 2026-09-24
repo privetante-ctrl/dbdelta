@@ -9,6 +9,7 @@ from dataclasses import dataclass, field, replace
 
 from dbdelta.dialects import Dialect, name_key
 from dbdelta.loaders.base import LoadError, LoadResult
+from dbdelta.loaders.types import default_schema
 from dbdelta.model import (
     CheckConstraint,
     Column,
@@ -80,8 +81,10 @@ class TableDraft:
 class SchemaDraft:
     """Tables and enum types collected from a source, plus warnings for the user."""
 
-    def __init__(self, dialect: Dialect) -> None:
+    def __init__(self, dialect: Dialect, schema: str | None = None) -> None:
         self.dialect = dialect
+        self.schema = schema or default_schema(dialect)
+        """Schema whose objects are loaded; objects qualified with any other one are skipped."""
         self.warnings: list[str] = []
         self._tables: dict[str, TableDraft] = {}
         self._enums: dict[str, EnumType] = {}

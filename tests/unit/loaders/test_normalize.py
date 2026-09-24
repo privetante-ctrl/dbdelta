@@ -40,6 +40,10 @@ BOOLEAN = DataType("boolean")
         (PG, "'off'", BOOLEAN, "FALSE"),
         (PG, "now()", DataType("timestamptz"), "CURRENT_TIMESTAMP"),
         (PG, "CURRENT_TIMESTAMP", DataType("timestamptz"), "CURRENT_TIMESTAMP"),
+        # The sequence a nextval default names is stored as a regclass.
+        (PG, "nextval('s'::regclass)", INTEGER, "NEXTVAL('s')"),
+        (PG, "nextval('s')", INTEGER, "NEXTVAL('s')"),
+        (PG, "nextval('s'::text)", INTEGER, "NEXTVAL(CAST('s' AS text))"),
         (PG, "NULL", TEXT, None),
         (PG, "NULL::character varying", DataType("varchar"), None),
         (SQLITE, "(datetime('now'))", DataType("datetime"), "DATETIME('now')"),
