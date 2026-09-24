@@ -36,7 +36,7 @@ from dbdelta.diff import (
     SetDefault,
     SetNotNull,
 )
-from dbdelta.emit.base import EmitOptions, Emitter, index_key_names
+from dbdelta.emit.base import EmitOptions, Emitter, RiskNotes, index_key_names
 from dbdelta.emit.script import Block, Script, Statement
 from dbdelta.model import (
     CheckConstraint,
@@ -76,13 +76,13 @@ class PostgresEmitter(Emitter):
 
     dialect: ClassVar[Dialect] = Dialect.POSTGRESQL
 
-    def _emit(self, plan: MigrationPlan, options: EmitOptions) -> Script:
+    def _emit(self, plan: MigrationPlan, options: EmitOptions, notes: RiskNotes) -> Script:
         enum_values: list[Statement] = []
         drops_first: list[Statement] = []
         main: list[Statement] = []
         builds_last: list[Statement] = []
         for operation in plan.operations:
-            statements = self._statements(operation, plan, options)
+            statements = self._statements(operation, plan, options, notes)
             if isinstance(operation, AlterEnum):
                 enum_values += statements
             elif isinstance(operation, DropIndex) and self._concurrent(operation, plan, options):
@@ -100,9 +100,9 @@ class PostgresEmitter(Emitter):
         return Script(tuple(block for block in blocks if block.statements))
 
     def _statements(
-        self, operation: Operation, plan: MigrationPlan, options: EmitOptions
+        self, operation: Operation, plan: MigrationPlan, options: EmitOptions, notes: RiskNotes
     ) -> list[Statement]:
-        comment = describe_operation(operation)
+        comment = notes.comment(operation, describe_operation(operation))
         if isinstance(operation, ReorderColumns):
             note = "PostgreSQL cannot reorder columns; the column order stays as it is."
             return [Statement("", f"{comment}\n{note}")]

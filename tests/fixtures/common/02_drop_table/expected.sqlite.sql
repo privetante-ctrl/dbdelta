@@ -7,6 +7,7 @@ PRAGMA foreign_keys = OFF;
 BEGIN;
 
 -- drop table posts
+-- DANGER drop-table: Dropping posts permanently deletes all of its rows.
 DROP TABLE "posts";
 
 -- Lists rows that violate foreign keys; it must return no rows.

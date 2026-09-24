@@ -9,6 +9,11 @@ BEGIN;
 -- rebuild table contacts: SQLite cannot make these changes in place
 --   make contacts.email NOT NULL
 --   allow NULL in contacts.phone
+-- WARNING set-not-null: Making contacts.email NOT NULL fails if any row holds NULL.
+-- WARNING sqlite-rebuild: SQLite cannot make these changes to contacts in place, so the table is
+--   rebuilt: a new table is created, every row is copied, the old table is dropped and the new
+--   one renamed. Writes to the database wait meanwhile, a full copy of the table needs free
+--   space, and triggers on the table are dropped and not recreated.
 CREATE TABLE "_dbdelta_new_contacts" (
     "id" integer NOT NULL,
     "email" varchar(255) NOT NULL,

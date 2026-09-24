@@ -10,6 +10,10 @@ BEGIN;
 --   change type of accounts.balance from integer to bigint
 --   change type of accounts.code from varchar(10) to varchar(50)
 --   change type of accounts.rate from real to double precision
+-- WARNING sqlite-rebuild: SQLite cannot make these changes to accounts in place, so the table is
+--   rebuilt: a new table is created, every row is copied, the old table is dropped and the new
+--   one renamed. Writes to the database wait meanwhile, a full copy of the table needs free
+--   space, and triggers on the table are dropped and not recreated.
 CREATE TABLE "_dbdelta_new_accounts" (
     "id" integer NOT NULL,
     "balance" bigint NOT NULL,

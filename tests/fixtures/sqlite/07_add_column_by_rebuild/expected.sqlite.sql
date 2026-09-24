@@ -8,6 +8,10 @@ BEGIN;
 
 -- rebuild table logs: SQLite cannot make these changes in place
 --   add column logs.logged_at timestamp DEFAULT CURRENT_TIMESTAMP
+-- WARNING sqlite-rebuild: SQLite cannot make these changes to logs in place, so the table is
+--   rebuilt: a new table is created, every row is copied, the old table is dropped and the new
+--   one renamed. Writes to the database wait meanwhile, a full copy of the table needs free
+--   space, and triggers on the table are dropped and not recreated.
 CREATE TABLE "_dbdelta_new_logs" (
     "id" integer NOT NULL,
     "message" text NOT NULL,

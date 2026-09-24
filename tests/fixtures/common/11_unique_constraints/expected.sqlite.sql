@@ -9,6 +9,12 @@ BEGIN;
 -- rebuild table products: SQLite cannot make these changes in place
 --   drop unique constraint on products (name)
 --   add unique constraint products_sku_unique on products (sku)
+-- WARNING sqlite-rebuild: SQLite cannot make these changes to products in place, so the table is
+--   rebuilt: a new table is created, every row is copied, the old table is dropped and the new
+--   one renamed. Writes to the database wait meanwhile, a full copy of the table needs free
+--   space, and triggers on the table are dropped and not recreated.
+-- WARNING unique-duplicates: Rows already in products may contain duplicates of (sku), which
+--   make adding the unique constraint fail.
 CREATE TABLE "_dbdelta_new_products" (
     "id" integer NOT NULL,
     "sku" text NOT NULL,

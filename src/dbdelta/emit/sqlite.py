@@ -6,7 +6,7 @@ from dbdelta.dialects import Dialect, name_key
 from dbdelta.dialects.quoting import quote_identifier
 from dbdelta.dialects.sqlite import is_constant
 from dbdelta.diff import AddColumn, AddIndex, AddTable, DropColumn, DropIndex, DropTable, describe
-from dbdelta.emit.base import EmitOptions, Emitter, index_key_names
+from dbdelta.emit.base import EmitOptions, Emitter, RiskNotes, index_key_names
 from dbdelta.emit.script import Block, Script, Statement
 from dbdelta.model import Column, DataType, Identity, Index, PrimaryKey, Table
 from dbdelta.plan import MigrationPlan, Operation, RebuildTable, describe_operation
@@ -31,10 +31,16 @@ class SQLiteEmitter(Emitter):
 
     dialect: ClassVar[Dialect] = Dialect.SQLITE
 
-    def _emit(self, plan: MigrationPlan, options: EmitOptions) -> Script:  # noqa: ARG002
-        # None of the emit options applies to SQLite.
+    def _emit(
+        self,
+        plan: MigrationPlan,
+        options: EmitOptions,  # noqa: ARG002 - none of the emit options applies to SQLite
+        notes: RiskNotes,
+    ) -> Script:
         statements = [
-            statement for operation in plan.operations for statement in self._statements(operation)
+            statement
+            for operation in plan.operations
+            for statement in self._statements(operation, notes)
         ]
         if not statements:
             return Script()
@@ -56,7 +62,7 @@ class SQLiteEmitter(Emitter):
             )
         )
 
-    def _statements(self, operation: Operation) -> list[Statement]:
+    def _statements(self, operation: Operation, notes: RiskNotes) -> list[Statement]:
         match operation:
             case AddTable(table):
                 sql = [self.create_table(table)]
@@ -77,15 +83,16 @@ class SQLiteEmitter(Emitter):
             case DropIndex(table, index):
                 sql = [f"DROP INDEX {quote_identifier(self.index_name(table, index))}"]
             case RebuildTable():
-                return self._rebuild(operation)
+                return self._rebuild(operation, notes)
             case _:
                 raise ValueError(
                     f"SQLite cannot {describe_operation(operation)} in place; "
                     "the table has to be rebuilt"
                 )
-        return [Statement(sql[0], describe_operation(operation)), *map(Statement, sql[1:])]
+        comment = notes.comment(operation, describe_operation(operation))
+        return [Statement(sql[0], comment), *map(Statement, sql[1:])]
 
-    def _rebuild(self, rebuild: RebuildTable) -> list[Statement]:
+    def _rebuild(self, rebuild: RebuildTable, notes: RiskNotes) -> list[Statement]:
         old, new = rebuild.old, rebuild.new
         temporary = quote_identifier(_REBUILD_PREFIX + new.name)
         copied = [
@@ -107,8 +114,9 @@ class SQLiteEmitter(Emitter):
         ]
         sql += [self.create_index(new.name, index) for index in new.indexes]
         reasons = "\n".join(f"  {describe(change)}" for change in rebuild.changes)
-        comment = (
-            f"{describe_operation(rebuild)}: SQLite cannot make these changes in place\n{reasons}"
+        comment = notes.comment(
+            rebuild,
+            f"{describe_operation(rebuild)}: SQLite cannot make these changes in place\n{reasons}",
         )
         return [Statement(sql[0], comment), *map(Statement, sql[1:])]
 

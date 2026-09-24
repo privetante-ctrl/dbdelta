@@ -1,4 +1,4 @@
-"""The migration SQL for every fixture pair, compared with its stored expected file.
+"""The migration SQL for every fixture pair, with its risk notes, compared with a stored file.
 
 Regenerate the expected files with ``pytest --update-snapshots`` and review the diff.
 """
@@ -13,6 +13,7 @@ from dbdelta.diff import diff_schemas
 from dbdelta.emit import emit_migration
 from dbdelta.loaders import load_ddl
 from dbdelta.plan import plan_migration
+from dbdelta.risk import RiskContext, assess
 
 Snapshot = Callable[[Path, str], None]
 
@@ -20,8 +21,10 @@ Snapshot = Callable[[Path, str], None]
 def migration_sql(pair: FixturePair, dialect: Dialect) -> str:
     source = load_ddl(pair.a, dialect).schema
     target = load_ddl(pair.b, dialect).schema
-    plan = plan_migration(diff_schemas(source, target, dialect), source, target, dialect)
-    return emit_migration(plan).render()
+    changes = diff_schemas(source, target, dialect)
+    plan = plan_migration(changes, source, target, dialect)
+    findings = assess(changes, RiskContext(dialect, source, target))
+    return emit_migration(plan, findings=findings).render()
 
 
 def test_postgresql_migration(postgres_pair: FixturePair, snapshot: Snapshot) -> None:

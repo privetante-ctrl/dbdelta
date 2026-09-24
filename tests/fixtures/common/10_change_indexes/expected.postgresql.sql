@@ -7,9 +7,13 @@ DROP INDEX "ix_articles_author";
 DROP INDEX "ux_articles_title";
 
 -- create index ix_articles_author on articles (author, created_at)
+-- WARNING index-lock: Building ix_articles_author blocks inserts, updates and deletes on
+--   articles (SHARE lock) until the whole table has been indexed.
 CREATE INDEX "ix_articles_author" ON "articles" ("author", "created_at");
 
 -- create index ux_articles_title on articles (title)
+-- WARNING index-lock: Building ux_articles_title blocks inserts, updates and deletes on articles
+--   (SHARE lock) until the whole table has been indexed.
 CREATE INDEX "ux_articles_title" ON "articles" ("title");
 
 COMMIT;

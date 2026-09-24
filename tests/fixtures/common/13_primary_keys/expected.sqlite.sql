@@ -9,6 +9,12 @@ BEGIN;
 -- rebuild table memberships: SQLite cannot make these changes in place
 --   drop primary key on memberships (user_id)
 --   add primary key on memberships (user_id, group_id)
+-- WARNING unique-duplicates: Rows already in memberships may contain duplicates of (user_id,
+--   group_id), which make adding the primary key fail.
+-- WARNING sqlite-rebuild: SQLite cannot make these changes to memberships in place, so the table
+--   is rebuilt: a new table is created, every row is copied, the old table is dropped and the
+--   new one renamed. Writes to the database wait meanwhile, a full copy of the table needs free
+--   space, and triggers on the table are dropped and not recreated.
 CREATE TABLE "_dbdelta_new_memberships" (
     "user_id" integer NOT NULL,
     "group_id" integer NOT NULL,
@@ -23,6 +29,12 @@ ALTER TABLE "_dbdelta_new_memberships" RENAME TO "memberships";
 
 -- rebuild table tags: SQLite cannot make these changes in place
 --   add primary key on tags (name)
+-- WARNING unique-duplicates: Rows already in tags may contain duplicates of (name), which make
+--   adding the primary key fail.
+-- WARNING sqlite-rebuild: SQLite cannot make these changes to tags in place, so the table is
+--   rebuilt: a new table is created, every row is copied, the old table is dropped and the new
+--   one renamed. Writes to the database wait meanwhile, a full copy of the table needs free
+--   space, and triggers on the table are dropped and not recreated.
 CREATE TABLE "_dbdelta_new_tags" (
     "name" text NOT NULL,
     "label" text,

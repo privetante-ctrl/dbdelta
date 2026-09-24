@@ -13,6 +13,9 @@ CREATE TABLE "comments" (
 ALTER TABLE "categories" ADD COLUMN "parent_id" integer;
 
 -- add foreign key categories (parent_id) -> categories (id)
+-- WARNING foreign-key: Adding the foreign key checks every row of categories while holding SHARE
+--   ROW EXCLUSIVE locks on categories and categories, which block writes to both; rows without a
+--   match make the migration fail.
 ALTER TABLE "categories" ADD FOREIGN KEY ("parent_id") REFERENCES "categories" ("id");
 
 COMMIT;

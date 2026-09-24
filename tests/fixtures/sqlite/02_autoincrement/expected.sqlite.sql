@@ -8,6 +8,10 @@ BEGIN;
 
 -- rebuild table events: SQLite cannot make these changes in place
 --   change identity of events.id from none to autoincrement
+-- WARNING sqlite-rebuild: SQLite cannot make these changes to events in place, so the table is
+--   rebuilt: a new table is created, every row is copied, the old table is dropped and the new
+--   one renamed. Writes to the database wait meanwhile, a full copy of the table needs free
+--   space, and triggers on the table are dropped and not recreated.
 CREATE TABLE "_dbdelta_new_events" (
     "id" integer NOT NULL PRIMARY KEY AUTOINCREMENT,
     "kind" text NOT NULL

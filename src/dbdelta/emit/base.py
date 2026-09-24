@@ -1,11 +1,14 @@
 """The emitter interface and the SQL that every dialect writes the same way."""
 
+import textwrap
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import ClassVar
 
 from dbdelta.dialects import Dialect
 from dbdelta.dialects.quoting import quote_identifier, quote_qualified
+from dbdelta.diff import AlterEnum, Change
 from dbdelta.emit.script import Script
 from dbdelta.model import (
     CheckConstraint,
@@ -18,7 +21,8 @@ from dbdelta.model import (
     Table,
     UniqueConstraint,
 )
-from dbdelta.plan import MigrationPlan
+from dbdelta.plan import MigrationPlan, Operation, RebuildTable, ReplaceEnum
+from dbdelta.risk import Finding
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,14 +41,22 @@ class Emitter(ABC):
 
     dialect: ClassVar[Dialect]
 
-    def emit(self, plan: MigrationPlan, options: EmitOptions | None = None) -> Script:
-        """Render ``plan`` as a script of SQL statements."""
+    def emit(
+        self,
+        plan: MigrationPlan,
+        options: EmitOptions | None = None,
+        findings: Sequence[Finding] = (),
+    ) -> Script:
+        """Render ``plan`` as a script of SQL statements.
+
+        Risk ``findings`` are printed as comments above the statements they concern.
+        """
         if plan.dialect is not self.dialect:
             raise ValueError(f"cannot write a {plan.dialect} migration as {self.dialect} SQL")
-        return self._emit(plan, options or EmitOptions())
+        return self._emit(plan, options or EmitOptions(), RiskNotes(findings))
 
     @abstractmethod
-    def _emit(self, plan: MigrationPlan, options: EmitOptions) -> Script: ...
+    def _emit(self, plan: MigrationPlan, options: EmitOptions, notes: "RiskNotes") -> Script: ...
 
     @abstractmethod
     def type_sql(self, data_type: DataType) -> str:
@@ -114,6 +126,35 @@ class Emitter(ABC):
         return (
             f"CREATE {unique}INDEX {mode}{name}ON {quote_identifier(table)}{method} ({keys}){where}"
         )
+
+
+class RiskNotes:
+    """Risk findings to print above the statements of the operations they concern."""
+
+    _WIDTH = 94
+
+    def __init__(self, findings: Sequence[Finding]) -> None:
+        self._findings = tuple(findings)
+
+    def comment(self, operation: Operation, description: str) -> str:
+        """``description`` followed by one wrapped line per finding about ``operation``."""
+        concerned = _changes_of(operation)
+        lines = [description]
+        for finding in self._findings:
+            if concerned.intersection(finding.changes):
+                text = f"{finding.level.upper()} {finding.rule}: {finding.message}"
+                lines += textwrap.wrap(text, self._WIDTH, subsequent_indent="  ")
+        return "\n".join(lines)
+
+
+def _changes_of(operation: Operation) -> set[Change]:
+    match operation:
+        case RebuildTable(_, _, changes):
+            return set(changes)
+        case ReplaceEnum(old, new, _):
+            return {AlterEnum(old, new)}
+        case _:
+            return {operation}
 
 
 def index_key_names(index: Index) -> list[str]:

@@ -18,6 +18,13 @@ CREATE TABLE "comments" (
 -- rebuild table categories: SQLite cannot make these changes in place
 --   add column categories.parent_id integer
 --   add foreign key categories (parent_id) -> categories (id)
+-- WARNING foreign-key: SQLite does not check existing rows of categories when a foreign key is
+--   added. The migration runs PRAGMA foreign_key_check, which lists rows without a match but
+--   does not stop the migration.
+-- WARNING sqlite-rebuild: SQLite cannot make these changes to categories in place, so the table
+--   is rebuilt: a new table is created, every row is copied, the old table is dropped and the
+--   new one renamed. Writes to the database wait meanwhile, a full copy of the table needs free
+--   space, and triggers on the table are dropped and not recreated.
 CREATE TABLE "_dbdelta_new_categories" (
     "id" integer NOT NULL,
     "name" text NOT NULL,

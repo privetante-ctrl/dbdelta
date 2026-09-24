@@ -7,6 +7,7 @@ PRAGMA foreign_keys = OFF;
 BEGIN;
 
 -- drop table legacy_scores
+-- DANGER drop-table: Dropping legacy_scores permanently deletes all of its rows.
 DROP TABLE "legacy_scores";
 
 -- create table leagues
@@ -31,6 +32,17 @@ CREATE TABLE "leagues" (
 --   drop index ix_players_nickname on players (nickname)
 --   create unique index ux_players_email on players (email)
 --   drop default of players.rating
+-- DANGER drop-column: Dropping players.nickname permanently deletes its value in every row.
+-- WARNING check-violations: Rows already in players may violate CHECK ("rating" >= 0), which
+--   makes the migration fail.
+-- WARNING foreign-key: SQLite does not check existing rows of players when a foreign key is
+--   added. The migration runs PRAGMA foreign_key_check, which lists rows without a match but
+--   does not stop the migration.
+-- WARNING set-not-null: Making players.rating NOT NULL fails if any row holds NULL.
+-- WARNING sqlite-rebuild: SQLite cannot make these changes to players in place, so the table is
+--   rebuilt: a new table is created, every row is copied, the old table is dropped and the new
+--   one renamed. Writes to the database wait meanwhile, a full copy of the table needs free
+--   space, and triggers on the table are dropped and not recreated.
 CREATE TABLE "_dbdelta_new_players" (
     "id" integer NOT NULL,
     "team_id" integer,
@@ -53,6 +65,13 @@ CREATE UNIQUE INDEX "ux_players_email" ON "players" ("email");
 -- rebuild table teams: SQLite cannot make these changes in place
 --   add column teams.league_id integer
 --   add foreign key teams (league_id) -> leagues (id)
+-- WARNING foreign-key: SQLite does not check existing rows of teams when a foreign key is added.
+--   The migration runs PRAGMA foreign_key_check, which lists rows without a match but does not
+--   stop the migration.
+-- WARNING sqlite-rebuild: SQLite cannot make these changes to teams in place, so the table is
+--   rebuilt: a new table is created, every row is copied, the old table is dropped and the new
+--   one renamed. Writes to the database wait meanwhile, a full copy of the table needs free
+--   space, and triggers on the table are dropped and not recreated.
 CREATE TABLE "_dbdelta_new_teams" (
     "id" integer NOT NULL,
     "name" text NOT NULL,

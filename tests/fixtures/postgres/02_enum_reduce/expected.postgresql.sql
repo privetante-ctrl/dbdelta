@@ -1,6 +1,10 @@
 BEGIN;
 
 -- recreate enum type mood with values ('happy', 'ok', 'sad')
+-- DANGER enum-values: Value 'meh' is removed from mood; rows that still hold them make the
+--   conversion fail. PostgreSQL cannot remove or reorder enum values, so the type is recreated
+--   and every column using it is converted, rewriting those tables under an ACCESS EXCLUSIVE
+--   lock that blocks reads and writes.
 ALTER TYPE "mood" RENAME TO "mood__dbdelta_old";
 
 CREATE TYPE "mood" AS ENUM ('happy', 'ok', 'sad');

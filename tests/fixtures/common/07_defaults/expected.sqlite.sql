@@ -11,6 +11,10 @@ BEGIN;
 --   set default of settings.page_size to 10
 --   drop default of settings.level
 --   set default of settings.created_at to CURRENT_TIMESTAMP
+-- WARNING sqlite-rebuild: SQLite cannot make these changes to settings in place, so the table is
+--   rebuilt: a new table is created, every row is copied, the old table is dropped and the new
+--   one renamed. Writes to the database wait meanwhile, a full copy of the table needs free
+--   space, and triggers on the table are dropped and not recreated.
 CREATE TABLE "_dbdelta_new_settings" (
     "id" integer NOT NULL,
     "theme" text DEFAULT 'dark',
