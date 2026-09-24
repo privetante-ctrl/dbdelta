@@ -85,6 +85,48 @@ UNIQUE constraints whose column names differ in case from the column declaration
 The database is opened read-only (`mode=ro`), and a missing file is an error: sqlite3 would
 otherwise create an empty database, which reads as "drop every table".
 
+## Diff
+
+`diff_schemas(source, target, dialect)` returns a tuple of typed, immutable changes, one per
+difference (`AddColumn`, `AlterColumnType`, `DropIndex`, ...). `Change` is a union of these
+records rather than a class hierarchy, so risk rules, the planner and emitters dispatch with
+`match` and mypy checks that every change type is handled.
+
+- **Names follow the dialect.** Tables, columns and constraints are matched with
+  `dialects.name_key`: exactly in PostgreSQL, case-insensitively in SQLite.
+- **Constraints and indexes are paired by definition.** A name only counts when both sides
+  name the object explicitly. `PRIMARY KEY (id)` in a file therefore matches `users_pkey` in a
+  database, while two different explicit names are a real difference. Pairs sharing an
+  explicit name are formed first, so a named constraint is never matched to an unnamed twin.
+- **Changing a constraint or index is drop + add**, because neither PostgreSQL nor SQLite can
+  alter their definition in place.
+- **Column order** is ignored unless strict checking is requested; new columns are expected at
+  the end of the table, where `ADD COLUMN` puts them.
+
+## Plan
+
+`plan_migration(changes, source, dialect)` orders changes in fixed phases: first remove what
+depends on objects that are about to go (foreign keys, then indexes and constraints), then
+drop columns and tables, then create enum types, tables and columns, alter columns, add
+constraints and indexes, and add foreign keys last, when every table, column and key they
+need exists. Enum types are dropped at the very end, once no column uses them.
+
+Tables are created in foreign key order and dropped in reverse. The order comes from
+`plan/graph.py`, a thin layer over the standard library's `graphlib` that makes the order
+deterministic and breaks cycles by ignoring one dependency per cycle.
+
+PostgreSQL checks foreign keys in DDL; SQLite only checks them when rows change. The
+`checks_foreign_keys_in_ddl` dialect trait switches on three extra rules:
+
+- a foreign key that closes a cycle between new tables, or references a key created later in
+  the migration, is added with `ALTER TABLE` after all tables exist;
+- tables that reference each other are released (their foreign key dropped) before dropping;
+- a foreign key whose referenced primary key, UNIQUE constraint or unique index is replaced
+  is dropped before and re-added after, because PostgreSQL refuses to drop a key in use.
+
+In SQLite all foreign keys stay inline in `CREATE TABLE`, which is the only place SQLite
+accepts them.
+
 ## Known limitations
 
 - sqlglot cannot parse a few rarely used SQLite forms: multi-word type names such as

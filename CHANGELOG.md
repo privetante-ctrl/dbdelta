@@ -15,3 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Schema loading from PostgreSQL and SQLite DDL files, and from live SQLite databases.
 - Normalization of type aliases, defaults and expressions, so that equivalent schemas
   compare equal whichever source they come from.
+- Schema diff producing typed changes for enum types, tables, columns, keys, constraints
+  and indexes; unnamed constraints never count as differences.
+- Migration planner that orders changes by dependency, creates tables in foreign key order
+  and handles foreign key cycles.

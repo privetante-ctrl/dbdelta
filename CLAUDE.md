@@ -33,7 +33,7 @@ uv run pre-commit run --all-files # all of the above
 | `risk/`     | Risk rules, one class/function per rule, registered in a registry       | diff, dialects, model             |
 | `diff/`     | `Schema × Schema → list[Change]` with typed changes                     | dialects, model                   |
 | `loaders/`  | DDL file (sqlglot) and live DB (SQLAlchemy) → model, all normalization  | dialects, model                   |
-| `dialects/` | Facts about each dialect (the `Dialect` enum, later its capabilities)   | model                             |
+| `dialects/` | Facts about each dialect: the `Dialect` enum, traits, name folding      | model                             |
 | `model/`    | Frozen dataclasses: Schema, Table, Column, PrimaryKey, ForeignKey, …    | nothing                           |
 
 - `model`, `dialects`, `diff`, `risk`, `plan`, `emit` never import sqlglot, SQLAlchemy, Typer or Rich.
