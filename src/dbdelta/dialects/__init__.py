@@ -22,6 +22,15 @@ class DialectTraits:
     that key cannot be dropped while the foreign key uses it.
     """
 
+    alters_table_definitions: bool
+    """Whether ALTER TABLE can change column definitions and table constraints.
+
+    If not, such changes are applied by rebuilding the table.
+    """
+
+    transactional_ddl: bool
+    """Whether DDL statements can run inside a transaction and be rolled back."""
+
 
 class Dialect(StrEnum):
     """A supported database dialect. Values match the SQLAlchemy URL scheme."""
@@ -35,10 +44,21 @@ class Dialect(StrEnum):
 
 
 _TRAITS = {
-    # Quoted names keep their case; unquoted ones are folded by the loaders already.
-    Dialect.POSTGRESQL: DialectTraits(case_sensitive_names=True, checks_foreign_keys_in_ddl=True),
-    # SQLite resolves foreign keys only when rows are written, so cycles need no special care.
-    Dialect.SQLITE: DialectTraits(case_sensitive_names=False, checks_foreign_keys_in_ddl=False),
+    Dialect.POSTGRESQL: DialectTraits(
+        # Quoted names keep their case; unquoted ones are folded by the loaders already.
+        case_sensitive_names=True,
+        checks_foreign_keys_in_ddl=True,
+        alters_table_definitions=True,
+        transactional_ddl=True,
+    ),
+    Dialect.SQLITE: DialectTraits(
+        case_sensitive_names=False,
+        # SQLite resolves foreign keys only when rows are written.
+        checks_foreign_keys_in_ddl=False,
+        # ALTER TABLE in SQLite can only rename a table and add, drop or rename columns.
+        alters_table_definitions=False,
+        transactional_ddl=True,
+    ),
 }
 
 _ASCII_LOWER = str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz")
