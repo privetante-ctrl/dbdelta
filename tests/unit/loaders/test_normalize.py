@@ -68,7 +68,7 @@ def test_defaults_are_canonicalized(
         (
             SQLITE,
             "(Age >= 0) AND (\"Name\" <> '')",
-            '("age" >= 0) AND ("name" <> \'\')',
+            '"age" >= 0 AND "name" <> \'\'',
             {"age", "name"},
         ),
         (SQLITE, "status IN ('a', 'b')", "\"status\" IN ('a', 'b')", {"status"}),
@@ -81,6 +81,36 @@ def test_expressions_fold_and_quote_identifiers(
 
     assert result.sql == expected_sql
     assert result.columns == expected_columns
+
+
+@pytest.mark.parametrize(
+    ("printed", "written"),
+    [
+        (
+            "status::text = ANY (ARRAY['a'::character varying, 'b'::character varying]::text[])",
+            "status IN ('a', 'b')",
+        ),
+        ("status::text <> ALL (ARRAY['a'::text])", "status NOT IN ('a')"),
+        (
+            "price >= 0::numeric AND price < 100::numeric OR price IS NULL",
+            "((price >= 0) AND (price < 100)) OR (price IS NULL)",
+        ),
+        ("((status)::text = 'a'::text)", "status = 'a'"),
+        ("lower(email::text)", "lower(email)"),
+        ("a AND b AND c", "a AND (b AND c)"),
+        ("d > '2024-01-01'::date", "d > '2024-01-01'"),
+    ],
+)
+def test_postgresql_printed_conditions_match_what_was_written(printed: str, written: str) -> None:
+    assert parse_expression(printed, PG) == parse_expression(written, PG)
+
+
+@pytest.mark.parametrize(
+    "expression",
+    ["(a OR b) AND c", "(a + b) * c > 0", "a - (b - c) > 0", "CAST(a AS integer) > 0"],
+)
+def test_meaningful_parentheses_and_casts_are_kept(expression: str) -> None:
+    assert parse_expression(expression, PG).sql.count("(") == expression.count("(")
 
 
 def test_differently_spelled_equal_expressions_compare_equal() -> None:

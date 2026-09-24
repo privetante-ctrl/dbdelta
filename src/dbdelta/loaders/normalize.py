@@ -7,6 +7,7 @@ SQL through these functions so that the diff only ever sees canonical values.
 """
 
 import re
+from collections.abc import Callable
 
 import sqlglot
 from sqlglot import exp
@@ -60,15 +61,27 @@ def parse_default(text: str, column_type: DataType, dialect: Dialect) -> str | N
     return normalize_default(_parse(text, dialect), column_type, dialect)
 
 
-def normalize_expression(node: exp.Expr, dialect: Dialect) -> Expression:
+def normalize_expression(
+    node: exp.Expr, dialect: Dialect, *, implicit_casts: bool = True
+) -> Expression:
     """Render a parsed expression canonically and collect the columns it reads.
 
     Identifiers are folded the way the database folds them and then always quoted, so
     ``"age" > 0``, ``AGE > 0`` and ``(age > 0)`` all become ``"age" > 0`` in PostgreSQL.
     Quoting everything keeps the output valid without tracking each dialect's keywords.
+
+    PostgreSQL prints stored conditions in its own way: with redundant parentheses, with
+    casts it added itself (``0::numeric``, ``status::text``) and with ``IN`` lists turned into
+    ``= ANY (ARRAY[...])``. Those spellings are folded back, so a condition compares equal
+    whether it was read from a file or from the catalog. ``implicit_casts=False`` keeps all
+    casts, for defaults, where a cast may change the stored value.
     """
     sg_dialect = sqlglot_dialect(dialect)
     node = normalize_identifiers(_unwrap(node.copy()), dialect=sg_dialect)
+    if implicit_casts:
+        node = _rewrite(node, _drop_implicit_cast)
+        node = _rewrite(node, _any_to_in)
+    node = _unwrap(_rewrite(node, _drop_redundant_paren))
     for identifier in node.find_all(exp.Identifier):
         identifier.set("quoted", True)
     columns = frozenset(column.name for column in node.find_all(exp.Column))
@@ -82,7 +95,8 @@ def normalize_default(node: exp.Expr, column_type: DataType, dialect: Dialect) -
         node = _unwrap(node.this)
     if isinstance(node, exp.Null):
         return None
-    return normalize_expression(_coerce_literal(node, column_type), dialect).sql
+    literal = _coerce_literal(node, column_type)
+    return normalize_expression(literal, dialect, implicit_casts=False).sql
 
 
 def _parse(text: str, dialect: Dialect) -> exp.Expr:
@@ -131,3 +145,105 @@ def _coerce_literal(node: exp.Expr, column_type: DataType) -> exp.Expr:
     if column_type.name in _NUMERIC_TYPES and literal.is_string and _NUMBER.fullmatch(text):
         return exp.Literal.number(text)
     return node
+
+
+def _rewrite(node: exp.Expr, rule: Callable[[exp.Expr], exp.Expr]) -> exp.Expr:
+    """Apply ``rule`` until nothing changes; sqlglot skips the inside of replaced nodes."""
+    while True:
+        rewritten = node.transform(rule)
+        if rewritten == node:
+            return rewritten
+        node = rewritten
+
+
+_STRING_CAST_TARGETS = frozenset({"text", "varchar", "char", "bpchar"})
+
+# Binding strength of operators, weakest first; anything absent binds like an atom.
+_PRECEDENCE: tuple[tuple[type[exp.Expr], ...], ...] = (
+    (exp.Or,),
+    (exp.And,),
+    (exp.Not,),
+    (
+        exp.EQ,
+        exp.NEQ,
+        exp.GT,
+        exp.GTE,
+        exp.LT,
+        exp.LTE,
+        exp.In,
+        exp.Is,
+        exp.Like,
+        exp.ILike,
+        exp.Between,
+    ),
+    (exp.DPipe,),
+    (exp.Add, exp.Sub),
+    (exp.Mul, exp.Div, exp.Mod),
+    (exp.Neg,),
+)
+_ATOM = len(_PRECEDENCE)
+
+
+def _precedence(node: exp.Expr) -> int:
+    return next((rank for rank, kinds in enumerate(_PRECEDENCE) if isinstance(node, kinds)), _ATOM)
+
+
+def _drop_redundant_paren(node: exp.Expr) -> exp.Expr:
+    """Remove parentheses that do not change how the expression is evaluated."""
+    if not isinstance(node, exp.Paren):
+        return node
+    child: exp.Expr = node.this
+    parent = node.parent
+    if not isinstance(parent, exp.Binary | exp.Unary | exp.In | exp.Between):
+        return child
+    if _precedence(child) > _precedence(parent):
+        return child
+    # AND and OR are associative, so PostgreSQL prints nested ones without parentheses.
+    if type(child) is type(parent) and isinstance(child, exp.And | exp.Or):
+        return child
+    return node
+
+
+def _drop_implicit_cast(node: exp.Expr) -> exp.Expr:
+    """Remove casts PostgreSQL adds when it stores a condition.
+
+    It casts literals to the type they are compared with, columns to text before text
+    operations and array literals to the array type; none of these change the result.
+    """
+    if not isinstance(node, exp.Cast):
+        return node
+    inner = _unwrap(node.this)
+    if isinstance(inner, exp.Literal | exp.Array | exp.Null | exp.Boolean) or (
+        isinstance(inner, exp.Neg) and isinstance(inner.this, exp.Literal)
+    ):
+        return inner
+    target = node.to
+    if (
+        isinstance(inner, exp.Column)
+        and isinstance(target.this, exp.DataType.Type)
+        and target.this.value.lower() in _STRING_CAST_TARGETS
+    ):
+        return inner
+    return node
+
+
+def _any_to_in(node: exp.Expr) -> exp.Expr:
+    """Turn ``x = ANY (ARRAY[...])`` back into ``x IN (...)``, and ``<> ALL`` into NOT IN."""
+    if not isinstance(node, exp.EQ | exp.NEQ):
+        return node
+    quantified = node.expression
+    if isinstance(node, exp.EQ) and isinstance(quantified, exp.Any):
+        array = _unwrap(quantified.this)
+    elif (
+        isinstance(node, exp.NEQ)
+        and isinstance(quantified, exp.Anonymous)
+        and str(quantified.this).upper() == "ALL"
+        and len(quantified.expressions) == 1
+    ):
+        array = _unwrap(quantified.expressions[0])
+    else:
+        return node
+    if not isinstance(array, exp.Array):
+        return node
+    membership = exp.In(this=node.this, expressions=array.expressions)
+    return membership if isinstance(node, exp.EQ) else exp.Not(this=membership)
