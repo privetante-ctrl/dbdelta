@@ -97,6 +97,9 @@ docstring-code-format = true
 python_version = "3.11"
 strict = true
 files = ["src", "tests"]
+# Test modules share basenames across directories; map them by path instead of by name.
+mypy_path = "src"
+explicit_package_bases = true
 warn_unreachable = true
 enable_error_code = ["ignore-without-code", "redundant-expr", "truthy-bool"]
 
