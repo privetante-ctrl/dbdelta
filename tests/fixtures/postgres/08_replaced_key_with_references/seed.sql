@@ -1,0 +1,2 @@
+INSERT INTO customers VALUES (1);
+INSERT INTO orders VALUES (1, 1);

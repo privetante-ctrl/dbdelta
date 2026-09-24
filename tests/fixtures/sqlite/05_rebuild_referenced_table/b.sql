@@ -1,0 +1,8 @@
+CREATE TABLE owners (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL
+);
+CREATE TABLE pets (
+    id INTEGER PRIMARY KEY,
+    owner_id INTEGER NOT NULL REFERENCES owners (id)
+);

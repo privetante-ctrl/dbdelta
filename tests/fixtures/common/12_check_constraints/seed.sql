@@ -1,0 +1,1 @@
+INSERT INTO orders VALUES (1, 2, 9.99);

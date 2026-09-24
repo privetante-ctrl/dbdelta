@@ -106,6 +106,8 @@ enable_error_code = ["ignore-without-code", "redundant-expr", "truthy-bool"]
 [tool.pytest.ini_options]
 minversion = "8.0"
 testpaths = ["tests"]
+# Lets tests import their shared helpers as ``tests.support``.
+pythonpath = ["."]
 addopts = ["-ra", "--strict-markers", "--strict-config", "--import-mode=importlib"]
 xfail_strict = true
 filterwarnings = ["error"]

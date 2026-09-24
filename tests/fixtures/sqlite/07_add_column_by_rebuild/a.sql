@@ -1,0 +1,4 @@
+CREATE TABLE logs (
+    id INTEGER PRIMARY KEY,
+    message TEXT NOT NULL
+);

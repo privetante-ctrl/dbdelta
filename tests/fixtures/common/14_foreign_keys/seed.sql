@@ -1,0 +1,3 @@
+INSERT INTO authors VALUES (1);
+INSERT INTO books VALUES (1, 1);
+INSERT INTO reviews VALUES (1, 1);
