@@ -52,6 +52,10 @@ send raw SQL through the same functions in `loaders/normalize.py`:
 | `now()`                                  | `CURRENT_TIMESTAMP`   | same function                            |
 | `DEFAULT NULL`                           | no default            | same behaviour                           |
 | `(Age > 0)` in PostgreSQL                | `"age" > 0`           | identifier folding; quoting everything avoids keyword lists |
+| `(price > (0)::numeric)` in a PG catalog | `"price" > 0`         | PostgreSQL adds parentheses and casts to stored conditions |
+| `status = ANY (ARRAY['a'::text, 'b'])`   | `"status" IN ('a', 'b')` | how PostgreSQL stores `IN` lists      |
+| `nextval('s'::regclass)`                 | `NEXTVAL('s')`        | PostgreSQL resolves the name when it stores the default |
+| `integer` + owned sequence `nextval`     | `serial`              | what `serial` expands to               |
 | primary key column without `NOT NULL`    | `NOT NULL`            | PostgreSQL enforces it; SQLite only fails to because of a documented legacy bug |
 
 sqlglot parses and renders SQL, through small dialect subclasses (`loaders/_sqlglot.py`)
@@ -84,6 +88,29 @@ UNIQUE constraints whose column names differ in case from the column declaration
 
 The database is opened read-only (`mode=ro`), and a missing file is an error: sqlite3 would
 otherwise create an empty database, which reads as "drop every table".
+
+### Live PostgreSQL: inspector plus catalog queries
+
+The SQLAlchemy inspector provides columns, keys, UNIQUE and CHECK constraints, foreign keys
+and enum types. The catalog is queried directly where the inspector is approximate:
+`format_type` gives exact column types, `pg_get_serial_sequence` tells a `serial` column
+from a column that borrows another sequence, `pg_get_indexdef` gives index definitions,
+which the DDL reader parses like a schema file, and `pg_class.reltuples` gives row
+estimates for the risk rules (`-1`, never analyzed, means "unknown"). Indexes that back a
+primary key or UNIQUE constraint belong to the constraint and are not loaded twice.
+
+The loader sets the search path to the loaded schema, so PostgreSQL prints names of types,
+sequences and tables without a schema prefix, exactly as a schema file names them. Views,
+materialized views, foreign and partitioned tables are skipped with a warning; partitions
+are left out silently. Sessions run with `default_transaction_read_only=on`, so the server
+itself refuses any write.
+
+### pg_dump output
+
+`pg_dump --schema-only` output loads like any schema file: psql meta-commands such as
+`\restrict` are dropped, `CREATE SEQUENCE ... OWNED BY` plus a `nextval` default becomes a
+`serial` column, `ADD GENERATED ... AS IDENTITY` is applied to its column, and names
+qualified with the loaded schema lose the qualifier. Objects in other schemas are skipped.
 
 ## Diff
 
@@ -215,9 +242,15 @@ non-constant defaults) are added by rebuilding as well.
 - **Round-trip on SQLite:** build A in memory, insert the seed rows, run the migration, reload
   the schema and require a strict diff against B to be empty, surviving tables to keep their
   rows, `PRAGMA foreign_key_check` to pass and a second plan to be empty.
-- **Execution on PostgreSQL:** every PostgreSQL migration runs against a real server in its
-  own schema, once in a single transaction and once with concurrent indexes. These tests
-  need `DBDELTA_TEST_POSTGRES_URL`; CI provides PostgreSQL 16 as a service container.
+- **Round-trip on PostgreSQL:** the same round-trip for every PostgreSQL and common pair on a
+  real server, each test in its own schema, once in a single transaction and once with
+  concurrent indexes.
+- **Loader equivalence:** a schema file and the database built from it must load into the
+  same model, on SQLite and on PostgreSQL; a `pg_dump` of each fixture must load into the
+  same model as the database it was taken from.
+- PostgreSQL tests need `DBDELTA_TEST_POSTGRES_URL` and are skipped without it;
+  `docker compose up -d --wait` starts a suitable server. CI runs them against
+  PostgreSQL 14, 16 and 18.
 
 ## Known limitations
 
@@ -230,7 +263,8 @@ non-constant defaults) are added by rebuilding as well.
   and `STRICT`, `DEFERRABLE` and `MATCH` on foreign keys, `NULLS FIRST/LAST` in indexes.
 - In SQLite, `INT PRIMARY KEY` is canonicalized like `INTEGER PRIMARY KEY`, although only
   the latter is an alias of the rowid.
-- Only one schema is loaded (`public` in PostgreSQL, `main` in SQLite).
+- One schema is loaded per source (`public` by default in PostgreSQL, `main` in SQLite);
+  references to tables in other schemas are kept qualified.
 - PostgreSQL cannot reorder columns; with strict column order checking the difference is
   reported but not applied.
 - Rebuilding a SQLite table with `AUTOINCREMENT` restarts its counter from the largest
