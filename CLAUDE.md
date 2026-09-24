@@ -25,17 +25,18 @@ uv run pre-commit run --all-files # all of the above
 
 `src/dbdelta/`, dependencies point strictly downwards (enforced by import-linter in pyproject):
 
-| Layer      | Responsibility                                                         | May import               |
-|------------|------------------------------------------------------------------------|--------------------------|
-| `cli/`     | Typer commands, config (`dbdelta.toml`), output formats, side effects  | everything               |
-| `emit/`    | Per-dialect SQL generators behind a common `Emitter` interface         | plan, risk, diff, model  |
-| `plan/`    | Ordering, dependency resolution, transaction blocks                    | diff, model              |
-| `risk/`    | Risk rules, one class/function per rule, registered in a registry      | diff, model              |
-| `diff/`    | `Schema × Schema → list[Change]` with typed changes                    | model                    |
-| `loaders/` | DDL file (sqlglot) and live DB (SQLAlchemy Inspector) → model, normalization | model              |
-| `model/`   | Frozen dataclasses: Schema, Table, Column, PrimaryKey, ForeignKey, …   | nothing                  |
+| Layer       | Responsibility                                                          | May import                        |
+|-------------|-------------------------------------------------------------------------|-----------------------------------|
+| `cli/`      | Typer commands, config (`dbdelta.toml`), output formats, side effects   | everything                        |
+| `emit/`     | Per-dialect SQL generators behind a common `Emitter` interface          | plan, risk, diff, dialects, model |
+| `plan/`     | Ordering, dependency resolution, transaction blocks                     | diff, dialects, model             |
+| `risk/`     | Risk rules, one class/function per rule, registered in a registry       | diff, dialects, model             |
+| `diff/`     | `Schema × Schema → list[Change]` with typed changes                     | dialects, model                   |
+| `loaders/`  | DDL file (sqlglot) and live DB (SQLAlchemy) → model, all normalization  | dialects, model                   |
+| `dialects/` | Facts about each dialect (the `Dialect` enum, later its capabilities)   | model                             |
+| `model/`    | Frozen dataclasses: Schema, Table, Column, PrimaryKey, ForeignKey, …    | nothing                           |
 
-- `model`, `diff`, `risk`, `plan`, `emit` never import sqlglot, SQLAlchemy, Typer or Rich.
+- `model`, `dialects`, `diff`, `risk`, `plan`, `emit` never import sqlglot, SQLAlchemy, Typer or Rich.
 - I/O (files, databases, terminal) happens only in `loaders/` and `cli/`. Everything else is pure.
 - No speculative abstractions. The only planned extension points are dialects and risk rules.
 
@@ -45,6 +46,9 @@ uv run pre-commit run --all-files # all of the above
   `int`/`integer`/`int4` are one type; `varchar` without length ≠ `text`; `'x'::text` = `'x'`
   in defaults; index column order matters; table column order is ignored unless
   `--strict-column-order`; names of unnamed constraints are never a difference.
+- **Loaders fail loudly**: a statement that does not parse is an error, never a warning (a
+  missing `CREATE TABLE` would become a `DROP TABLE`). Objects outside the MVP are skipped with
+  a warning in `LoadResult.warnings`. Live databases are opened read-only.
 - **Ordering**: create tables in FK-topological order, drop in reverse; cyclic FKs are added
   with separate `ALTER TABLE` after the tables exist; drop dependent indexes/constraints
   before dropping a column/table.
@@ -74,7 +78,10 @@ uv run pre-commit run --all-files # all of the above
 - Round-trip is the main correctness guarantee: load A into a real DB, apply the plan, reflect
   back, assert it equals B, then assert `diff(result, B)` is empty.
 - Property-based tests (hypothesis): `diff(S, S)` is empty; generated schemas round-trip.
-- Fixture pairs live in `tests/fixtures/<NN_name>/{a.sql,b.sql}`.
+- Fixture pairs live in `tests/fixtures/{common,postgres,sqlite}/<NN_name>/{a.sql,b.sql}`;
+  `common` pairs use portable DDL and run on every dialect.
+- `tests/integration/test_loader_equivalence.py`: a DDL file and the database built from it
+  must load into the same model. Add a case whenever normalization changes.
 - PostgreSQL tests are marked `@pytest.mark.postgres` and use `DBDELTA_TEST_POSTGRES_URL`.
 - Coverage of `diff/`, `risk/`, `plan/` stays at or above 90 %.
 
