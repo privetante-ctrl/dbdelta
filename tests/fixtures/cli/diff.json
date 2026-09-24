@@ -1,0 +1,207 @@
+{
+  "dbdelta": "<version>",
+  "dialect": "postgresql",
+  "source": {
+    "location": "a.sql",
+    "warnings": []
+  },
+  "target": {
+    "location": "b.sql",
+    "warnings": []
+  },
+  "summary": {
+    "changes": 16,
+    "danger": 2,
+    "warning": 6,
+    "info": 0
+  },
+  "changes": [
+    {
+      "kind": "add_table",
+      "table": "leagues",
+      "description": "create table leagues",
+      "risk": null
+    },
+    {
+      "kind": "drop_table",
+      "table": "legacy_scores",
+      "description": "drop table legacy_scores",
+      "risk": "danger"
+    },
+    {
+      "kind": "drop_column",
+      "table": "players",
+      "description": "drop column players.nickname",
+      "risk": "danger"
+    },
+    {
+      "kind": "add_column",
+      "table": "players",
+      "description": "add column players.email text",
+      "risk": null
+    },
+    {
+      "kind": "alter_column_type",
+      "table": "players",
+      "description": "change type of players.name from varchar(50) to varchar(100)",
+      "risk": null
+    },
+    {
+      "kind": "alter_column_type",
+      "table": "players",
+      "description": "change type of players.rating from integer to bigint",
+      "risk": "warning"
+    },
+    {
+      "kind": "set_default",
+      "table": "players",
+      "description": "set default of players.rating to 1200",
+      "risk": null
+    },
+    {
+      "kind": "set_not_null",
+      "table": "players",
+      "description": "make players.rating NOT NULL",
+      "risk": "warning"
+    },
+    {
+      "kind": "drop_foreign_key",
+      "table": "players",
+      "description": "drop foreign key players (team_id) -> teams (id)",
+      "risk": null
+    },
+    {
+      "kind": "add_foreign_key",
+      "table": "players",
+      "description": "add foreign key players (team_id) -> teams (id) ON DELETE SET NULL",
+      "risk": "warning"
+    },
+    {
+      "kind": "drop_check",
+      "table": "players",
+      "description": "drop check constraint on players (\"rating\" > 0)",
+      "risk": null
+    },
+    {
+      "kind": "add_check",
+      "table": "players",
+      "description": "add check constraint on players (\"rating\" >= 0)",
+      "risk": "warning"
+    },
+    {
+      "kind": "drop_index",
+      "table": "players",
+      "description": "drop index ix_players_nickname on players (nickname)",
+      "risk": null
+    },
+    {
+      "kind": "add_index",
+      "table": "players",
+      "description": "create unique index ux_players_email on players (email)",
+      "risk": "warning"
+    },
+    {
+      "kind": "add_column",
+      "table": "teams",
+      "description": "add column teams.league_id integer",
+      "risk": null
+    },
+    {
+      "kind": "add_foreign_key",
+      "table": "teams",
+      "description": "add foreign key teams (league_id) -> leagues (id)",
+      "risk": "warning"
+    }
+  ],
+  "findings": [
+    {
+      "rule": "drop-column",
+      "level": "danger",
+      "subject": "players.nickname",
+      "message": "Dropping players.nickname permanently deletes its value in every row.",
+      "recommendation": "Stop reading and writing the column in the application and deploy that first, back the values up, then drop the column in a later migration (expand and contract).",
+      "check_sql": "SELECT count(*) FROM \"players\" WHERE \"players\".\"nickname\" IS NOT NULL",
+      "changes": [
+        2
+      ]
+    },
+    {
+      "rule": "drop-table",
+      "level": "danger",
+      "subject": "table legacy_scores",
+      "message": "Dropping legacy_scores permanently deletes all of its rows.",
+      "recommendation": "Back the data up first, for example with CREATE TABLE ... AS SELECT, or stop using the table and drop it in a later release once nothing reads it.",
+      "check_sql": "SELECT count(*) FROM \"legacy_scores\"",
+      "changes": [
+        1
+      ]
+    },
+    {
+      "rule": "check-violations",
+      "level": "warning",
+      "subject": "check on players (\"rating\" >= 0)",
+      "message": "Rows already in players may violate CHECK (\"rating\" >= 0), which makes the migration fail. PostgreSQL checks every row while holding an ACCESS EXCLUSIVE lock that blocks reads and writes.",
+      "recommendation": "Fix the violating rows first. On a large table, add the constraint with NOT VALID and run ALTER TABLE ... VALIDATE CONSTRAINT separately; validating does not block writes.",
+      "check_sql": "SELECT count(*) FROM \"players\" WHERE NOT (\"rating\" >= 0)",
+      "changes": [
+        11
+      ]
+    },
+    {
+      "rule": "foreign-key",
+      "level": "warning",
+      "subject": "foreign key players (team_id) -> teams",
+      "message": "Adding the foreign key checks every row of players while holding SHARE ROW EXCLUSIVE locks on players and teams, which block writes to both; rows without a match make the migration fail.",
+      "recommendation": "Add the constraint with NOT VALID, which only takes a brief lock, then run ALTER TABLE ... VALIDATE CONSTRAINT in a separate transaction; validating does not block writes.",
+      "check_sql": "SELECT count(*) FROM \"players\" AS child WHERE child.\"team_id\" IS NOT NULL AND NOT EXISTS (SELECT 1 FROM \"teams\" AS parent WHERE parent.\"id\" = child.\"team_id\")",
+      "changes": [
+        9
+      ]
+    },
+    {
+      "rule": "foreign-key",
+      "level": "warning",
+      "subject": "foreign key teams (league_id) -> leagues",
+      "message": "Adding the foreign key checks every row of teams while holding SHARE ROW EXCLUSIVE locks on teams and leagues, which block writes to both; rows without a match make the migration fail.",
+      "recommendation": "Add the constraint with NOT VALID, which only takes a brief lock, then run ALTER TABLE ... VALIDATE CONSTRAINT in a separate transaction; validating does not block writes.",
+      "check_sql": null,
+      "changes": [
+        15
+      ]
+    },
+    {
+      "rule": "index-lock",
+      "level": "warning",
+      "subject": "index ux_players_email on players",
+      "message": "Building ux_players_email blocks inserts, updates and deletes on players (SHARE lock) until the whole table has been indexed.",
+      "recommendation": "Run with --concurrent-indexes to build it with CREATE INDEX CONCURRENTLY outside the transaction: it takes longer but does not block writes.",
+      "check_sql": null,
+      "changes": [
+        13
+      ]
+    },
+    {
+      "rule": "set-not-null",
+      "level": "warning",
+      "subject": "players.rating",
+      "message": "Making players.rating NOT NULL fails if any row holds NULL, and PostgreSQL checks every row while holding an ACCESS EXCLUSIVE lock that blocks reads and writes.",
+      "recommendation": "Backfill the NULLs first. On a large table, add CHECK (column IS NOT NULL) NOT VALID, validate it in a separate transaction, then SET NOT NULL: PostgreSQL 12 and later use the validated constraint and skip the scan.",
+      "check_sql": "SELECT count(*) FROM \"players\" WHERE \"players\".\"rating\" IS NULL",
+      "changes": [
+        7
+      ]
+    },
+    {
+      "rule": "type-rewrite",
+      "level": "warning",
+      "subject": "players.rating",
+      "message": "Changing players.rating from integer to bigint makes PostgreSQL rewrite the whole table and its indexes while holding an ACCESS EXCLUSIVE lock that blocks reads and writes.",
+      "recommendation": "On a large table, add a new column of the new type, backfill it in batches, switch the application over and drop the old column; otherwise run the migration in a maintenance window.",
+      "check_sql": null,
+      "changes": [
+        5
+      ]
+    }
+  ],
+  "sql": "-- Migration from a.sql to b.sql (postgresql), generated by dbdelta <version>.\n-- 16 changes, 8 risks: 2 danger, 6 warning.\n-- Read the comments marked DANGER, WARNING and INFO before running it.\n\nBEGIN;\n\n-- drop foreign key players (team_id) -> teams (id)\nALTER TABLE \"players\" DROP CONSTRAINT \"players_team_id_fkey\";\n\n-- drop check constraint on players (\"rating\" > 0)\nALTER TABLE \"players\" DROP CONSTRAINT \"players_rating_check\";\n\n-- drop index ix_players_nickname on players (nickname)\nDROP INDEX \"ix_players_nickname\";\n\n-- drop column players.nickname\n-- DANGER drop-column: Dropping players.nickname permanently deletes its value in every row.\nALTER TABLE \"players\" DROP COLUMN \"nickname\";\n\n-- drop table legacy_scores\n-- DANGER drop-table: Dropping legacy_scores permanently deletes all of its rows.\nDROP TABLE \"legacy_scores\";\n\n-- create table leagues\nCREATE TABLE \"leagues\" (\n    \"id\" integer NOT NULL,\n    \"name\" text NOT NULL,\n    PRIMARY KEY (\"id\"),\n    UNIQUE (\"name\")\n);\n\n-- add column players.email text\nALTER TABLE \"players\" ADD COLUMN \"email\" text;\n\n-- add column teams.league_id integer\nALTER TABLE \"teams\" ADD COLUMN \"league_id\" integer;\n\n-- drop default of players.rating\nALTER TABLE \"players\" ALTER COLUMN \"rating\" DROP DEFAULT;\n\n-- change type of players.name from varchar(50) to varchar(100)\nALTER TABLE \"players\" ALTER COLUMN \"name\" TYPE varchar(100);\n\n-- change type of players.rating from integer to bigint\n-- WARNING type-rewrite: Changing players.rating from integer to bigint makes PostgreSQL rewrite\n--   the whole table and its indexes while holding an ACCESS EXCLUSIVE lock that blocks reads and\n--   writes.\nALTER TABLE \"players\" ALTER COLUMN \"rating\" TYPE bigint;\n\n-- make players.rating NOT NULL\n-- WARNING set-not-null: Making players.rating NOT NULL fails if any row holds NULL, and\n--   PostgreSQL checks every row while holding an ACCESS EXCLUSIVE lock that blocks reads and\n--   writes.\nALTER TABLE \"players\" ALTER COLUMN \"rating\" SET NOT NULL;\n\n-- set default of players.rating to 1200\nALTER TABLE \"players\" ALTER COLUMN \"rating\" SET DEFAULT 1200;\n\n-- add check constraint on players (\"rating\" >= 0)\n-- WARNING check-violations: Rows already in players may violate CHECK (\"rating\" >= 0), which\n--   makes the migration fail. PostgreSQL checks every row while holding an ACCESS EXCLUSIVE lock\n--   that blocks reads and writes.\nALTER TABLE \"players\" ADD CHECK (\"rating\" >= 0);\n\n-- create unique index ux_players_email on players (email)\n-- WARNING index-lock: Building ux_players_email blocks inserts, updates and deletes on players\n--   (SHARE lock) until the whole table has been indexed.\nCREATE UNIQUE INDEX \"ux_players_email\" ON \"players\" (\"email\");\n\n-- add foreign key players (team_id) -> teams (id) ON DELETE SET NULL\n-- WARNING foreign-key: Adding the foreign key checks every row of players while holding SHARE\n--   ROW EXCLUSIVE locks on players and teams, which block writes to both; rows without a match\n--   make the migration fail.\nALTER TABLE \"players\" ADD FOREIGN KEY (\"team_id\") REFERENCES \"teams\" (\"id\") ON DELETE SET NULL;\n\n-- add foreign key teams (league_id) -> leagues (id)\n-- WARNING foreign-key: Adding the foreign key checks every row of teams while holding SHARE ROW\n--   EXCLUSIVE locks on teams and leagues, which block writes to both; rows without a match make\n--   the migration fail.\nALTER TABLE \"teams\" ADD FOREIGN KEY (\"league_id\") REFERENCES \"leagues\" (\"id\");\n\nCOMMIT;\n"
+}
