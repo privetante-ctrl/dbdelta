@@ -19,6 +19,8 @@ uv run ruff check --fix && uv run ruff format
 uv run mypy                       # strict, over src/ and tests/
 uv run lint-imports               # architecture contracts
 uv run pre-commit run --all-files # all of the above
+docker compose up -d --wait       # PostgreSQL for the tests, then:
+export DBDELTA_TEST_POSTGRES_URL=postgresql://postgres:postgres@localhost:5432/postgres
 ```
 
 ## Architecture

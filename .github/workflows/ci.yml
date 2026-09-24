@@ -38,15 +38,23 @@ jobs:
         run: uv run lint-imports
 
   test:
-    name: Tests (Python ${{ matrix.python-version }})
+    name: Tests (Python ${{ matrix.python-version }}, PostgreSQL ${{ matrix.postgres }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11", "3.12", "3.13"]
+        # Each Python version meets a different server: the oldest supported, the one the
+        # snapshots were taken on, and the newest.
+        include:
+          - python-version: "3.11"
+            postgres: "14"
+          - python-version: "3.12"
+            postgres: "16"
+          - python-version: "3.13"
+            postgres: "18"
     services:
       postgres:
-        image: postgres:16
+        image: postgres:${{ matrix.postgres }}
         env:
           POSTGRES_PASSWORD: postgres
         ports:
@@ -66,10 +74,16 @@ jobs:
           enable-cache: true
       - name: Install dependencies
         run: uv sync --locked --all-extras
+      - name: Install pg_dump ${{ matrix.postgres }}
+        # The runner's client is older than the newest server, which pg_dump refuses to dump.
+        run: |
+          sudo apt-get install -y postgresql-common
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+          sudo apt-get install -y postgresql-client-${{ matrix.postgres }}
       - name: Run tests
         run: uv run pytest --cov --cov-report=term --cov-report=xml
       - name: Upload coverage report
-        if: matrix.python-version == '3.11'
+        if: matrix.postgres == '16'
         uses: actions/upload-artifact@v4
         with:
           name: coverage-xml
