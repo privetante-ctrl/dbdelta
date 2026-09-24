@@ -232,6 +232,38 @@ transaction (the pragma has no effect inside one) and `PRAGMA foreign_key_check`
 the commit. Columns SQLite cannot add to a populated table (NOT NULL without a default,
 non-constant defaults) are added by rebuilding as well.
 
+## CLI
+
+`cli/analysis.py` runs the pipeline once per command: resolve the dialect, load both sides,
+drop the ignored tables, diff, assess, plan and emit. The commands differ only in what they
+print and how they exit:
+
+| Command | Default format | Exit code                                                       |
+|---------|----------------|-----------------------------------------------------------------|
+| `diff`  | `text`         | 0; 2 for invalid input                                          |
+| `plan`  | `sql`          | 0; 2 for invalid input                                          |
+| `check` | `text`         | 1 if a `danger` finding exists without `--allow-destructive`; 2 for invalid input |
+
+Every format carries the same content: loader warnings, changes, findings and the SQL.
+`text` is a Rich report for people, `sql` is the migration with a header comment, `json`
+is for tools (findings point at changes by index), and `markdown` is meant for a pull
+request comment, with the SQL folded into `<details>`.
+
+- **stdout stays clean.** Status that the chosen output does not show on the terminal
+  (loader warnings, the check verdict, where `--output` wrote to) goes to stderr, so
+  `dbdelta plan a.sql b.sql > migration.sql` produces a file that is only SQL.
+- **Colors only on terminals.** Rich decides from the stream (and honours `NO_COLOR` and
+  `FORCE_COLOR`); files and pipes get plain text without Rich's trailing padding.
+- **User data is never markup.** Names and paths enter Rich as `Text` objects and are
+  escaped in Markdown, so a table called `[red]` or `a|b` prints literally. Every comment
+  line in SQL starts with `--`, including lines of names that contain line breaks.
+- **Configuration.** `dbdelta.toml` in the working directory (or `--config`) holds the same
+  settings as the options, spelled like them. Options override it and pattern lists add to
+  it. Unknown keys are errors: a typo in `ignore-tables` would otherwise turn ignored tables
+  into `DROP TABLE` statements.
+- **Dialects.** A URL names its dialect; files use `--dialect`, then the configuration, then
+  PostgreSQL. Both sides must be the same dialect, because one migration is written.
+
 ## Testing strategy
 
 - **Unit tests** cover normalization, the diff, the planner and each emitter.
@@ -245,6 +277,8 @@ non-constant defaults) are added by rebuilding as well.
 - **Round-trip on PostgreSQL:** the same round-trip for every PostgreSQL and common pair on a
   real server, each test in its own schema, once in a single transaction and once with
   concurrent indexes.
+- **CLI:** each command runs end to end on fixture files and live databases; the text,
+  JSON and Markdown reports of one pair are kept as snapshots in `tests/fixtures/cli/`.
 - **Loader equivalence:** a schema file and the database built from it must load into the
   same model, on SQLite and on PostgreSQL; a `pg_dump` of each fixture must load into the
   same model as the database it was taken from.

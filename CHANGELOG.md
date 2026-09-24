@@ -26,6 +26,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   SQLite table rebuilds that keep the data.
 - 34 fixture schema pairs with expected SQL and round-trip tests on SQLite and PostgreSQL;
   loader equivalence tests between schema files, `pg_dump` output and live databases.
+- Command-line interface: `dbdelta diff`, `plan` and `check` with `text`, `sql`, `json`
+  and `markdown` output, `--output`, `--ignore-table`, `--ignore-rule`, `--dialect`,
+  `--schema`, `--strict-column-order`, `--concurrent-indexes`, `--large-table-rows` and
+  settings in `dbdelta.toml`. `check` exits with 1 on dangerous changes unless
+  `--allow-destructive` is given.
 - `docker-compose.yml` with a PostgreSQL server for the tests; CI covers PostgreSQL 14, 16
   and 18.
 - Risk assessment with 13 rules, each with a level, an explanation, a safer alternative and,
