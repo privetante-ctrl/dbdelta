@@ -135,6 +135,7 @@ layers = [
     "dbdelta.emit",
     "dbdelta.plan | dbdelta.risk",
     "dbdelta.diff",
+    "dbdelta.dialects",
     "dbdelta.model",
 ]
 
@@ -155,6 +156,7 @@ name = "Core is free of parsing, database and UI libraries"
 type = "forbidden"
 source_modules = [
     "dbdelta.model",
+    "dbdelta.dialects",
     "dbdelta.diff",
     "dbdelta.risk",
     "dbdelta.plan",
