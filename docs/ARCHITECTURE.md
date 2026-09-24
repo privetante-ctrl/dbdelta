@@ -127,6 +127,58 @@ PostgreSQL checks foreign keys in DDL; SQLite only checks them when rows change.
 In SQLite all foreign keys stay inline in `CREATE TABLE`, which is the only place SQLite
 accepts them.
 
+## Emit
+
+Emitters turn a plan into a `Script`: statements grouped into blocks, each block either run
+in a transaction (`BEGIN` ... `COMMIT`) or not. Every statement carries a one-line
+description of its change as a comment, so the SQL reads as a reviewed change list.
+Identifiers are always quoted and literals always escaped through `emit/quoting.py`; the
+only SQL taken verbatim is canonical SQL that came from a schema (defaults, CHECK
+conditions, index expressions).
+
+### PostgreSQL
+
+- The migration is one transaction, because PostgreSQL DDL is transactional.
+- New enum values are added in an earlier transaction: PostgreSQL refuses to use an enum
+  value in the transaction that added it.
+- With `concurrent_indexes`, index builds and drops on existing tables use `CONCURRENTLY`
+  outside the transaction. A unique index that a foreign key relies on stays inside, next to
+  the foreign key changes that depend on it.
+- A type change gets `USING` only when PostgreSQL has no assignment cast. Adding it
+  everywhere would be wrong: `USING col::varchar(10)` silently truncates, while a plain type
+  change fails on values that are too long.
+- Unnamed constraints are dropped by the name PostgreSQL gave them, computed like
+  PostgreSQL's `makeObjectName` (including truncation to 63 bytes) and checked against
+  PostgreSQL 16 in the tests.
+- An enum type losing or reordering values is renamed, recreated, and its columns converted
+  through `text`, with their defaults dropped and restored around the conversion.
+- A column that becomes an identity or serial column gets its sequence moved past the
+  values already in the table.
+
+### SQLite
+
+SQLite's `ALTER TABLE` can only add and drop columns. The planner turns every other change
+to an existing table into one `RebuildTable`, which follows the procedure in SQLite's
+documentation: create the new table under a temporary name, copy the rows, drop the old
+table, rename the new one, recreate the indexes. Foreign keys are switched off around the
+transaction (the pragma has no effect inside one) and `PRAGMA foreign_key_check` runs before
+the commit. Columns SQLite cannot add to a populated table (NOT NULL without a default,
+non-constant defaults) are added by rebuilding as well.
+
+## Testing strategy
+
+- **Unit tests** cover normalization, the diff, the planner and each emitter.
+- **Fixture pairs** in `tests/fixtures/{common,sqlite,postgres}/NN_name/` hold `a.sql`,
+  `b.sql` and optionally `seed.sql`. `common` pairs use portable DDL and run on both dialects.
+- **Snapshots:** the migration for each pair is compared with `expected.<dialect>.sql` next to
+  it. `pytest --update-snapshots` rewrites them, and the diff shows every change in output.
+- **Round-trip on SQLite:** build A in memory, insert the seed rows, run the migration, reload
+  the schema and require a strict diff against B to be empty, surviving tables to keep their
+  rows, `PRAGMA foreign_key_check` to pass and a second plan to be empty.
+- **Execution on PostgreSQL:** every PostgreSQL migration runs against a real server in its
+  own schema, once in a single transaction and once with concurrent indexes. These tests
+  need `DBDELTA_TEST_POSTGRES_URL`; CI provides PostgreSQL 16 as a service container.
+
 ## Known limitations
 
 - sqlglot cannot parse a few rarely used SQLite forms: multi-word type names such as
@@ -139,3 +191,9 @@ accepts them.
 - In SQLite, `INT PRIMARY KEY` is canonicalized like `INTEGER PRIMARY KEY`, although only
   the latter is an alias of the rowid.
 - Only one schema is loaded (`public` in PostgreSQL, `main` in SQLite).
+- PostgreSQL cannot reorder columns; with strict column order checking the difference is
+  reported but not applied.
+- Rebuilding a SQLite table with `AUTOINCREMENT` restarts its counter from the largest
+  existing id rather than from the old counter.
+- Index keys that are expressions are always emitted in parentheses, so an operator class
+  on an expression key is not supported.

@@ -82,7 +82,11 @@ uv run pre-commit run --all-files # all of the above
   `common` pairs use portable DDL and run on every dialect.
 - `tests/integration/test_loader_equivalence.py`: a DDL file and the database built from it
   must load into the same model. Add a case whenever normalization changes.
-- PostgreSQL tests are marked `@pytest.mark.postgres` and use `DBDELTA_TEST_POSTGRES_URL`.
+- Expected SQL lives next to each pair as `expected.<dialect>.sql`; regenerate with
+  `uv run pytest --update-snapshots` and review the diff before committing.
+- Shared test helpers live in `tests/support/` (importable as `tests.support`).
+- PostgreSQL tests are marked `@pytest.mark.postgres` and use `DBDELTA_TEST_POSTGRES_URL`;
+  they are skipped when it is unset.
 - Coverage of `diff/`, `risk/`, `plan/` stays at or above 90 %.
 
 ## Workflow

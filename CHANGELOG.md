@@ -19,3 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and indexes; unnamed constraints never count as differences.
 - Migration planner that orders changes by dependency, creates tables in foreign key order
   and handles foreign key cycles.
+- SQL emitters for PostgreSQL and SQLite: transaction blocks, `USING` only where needed,
+  concurrent index builds, enum value additions and replacements, identity columns, and
+  SQLite table rebuilds that keep the data.
+- 34 fixture schema pairs with expected SQL, round-trip tests on SQLite and execution tests
+  on PostgreSQL.
