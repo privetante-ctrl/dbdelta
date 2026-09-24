@@ -17,13 +17,12 @@ import sqlglot
 from sqlglot import exp
 from sqlglot.errors import ParseError
 
-from dbdelta.dialects import Dialect
+from dbdelta.dialects import Dialect, ascii_lower
 from dbdelta.loaders._draft import ForeignKeyDraft, SchemaDraft, TableDraft
 from dbdelta.loaders._sqlglot import WITHOUT_ROWID, sqlglot_dialect
 from dbdelta.loaders.base import LoadError, LoadResult
 from dbdelta.loaders.normalize import normalize_default, normalize_expression
 from dbdelta.loaders.types import (
-    ascii_lower,
     canonical_type,
     default_schema,
     fold_identifier,

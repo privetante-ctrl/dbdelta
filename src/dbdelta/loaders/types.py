@@ -3,7 +3,7 @@
 from sqlglot import exp
 from sqlglot.expressions import DType
 
-from dbdelta.dialects import Dialect
+from dbdelta.dialects import Dialect, ascii_lower
 from dbdelta.model import DataType
 
 _CANONICAL_NAMES: dict[DType, str] = {
@@ -93,14 +93,6 @@ def fold_identifier(identifier: exp.Identifier, dialect: Dialect) -> str:
     if dialect is Dialect.POSTGRESQL and not identifier.quoted:
         return ascii_lower(name)
     return name
-
-
-def ascii_lower(name: str) -> str:
-    """Lower-case ASCII letters only, the way both PostgreSQL and SQLite fold names."""
-    return name.translate(_ASCII_LOWER)
-
-
-_ASCII_LOWER = str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz")
 
 
 def _integer_params(node: exp.DataType) -> tuple[int, ...] | None:

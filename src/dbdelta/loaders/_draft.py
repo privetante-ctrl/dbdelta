@@ -7,9 +7,8 @@ keys without a column list point at the primary key, and primary key columns are
 
 from dataclasses import dataclass, field, replace
 
-from dbdelta.dialects import Dialect
+from dbdelta.dialects import Dialect, name_key
 from dbdelta.loaders.base import LoadError, LoadResult
-from dbdelta.loaders.types import ascii_lower
 from dbdelta.model import (
     CheckConstraint,
     Column,
@@ -172,11 +171,6 @@ class SchemaDraft:
             on_update=fk.on_update,
             name=fk.name,
         )
-
-
-def name_key(name: str, dialect: Dialect) -> str:
-    """Key under which the dialect considers two names to be the same object."""
-    return ascii_lower(name) if dialect is Dialect.SQLITE else name
 
 
 def _resolve_all(draft: TableDraft, names: tuple[str, ...]) -> tuple[str, ...]:

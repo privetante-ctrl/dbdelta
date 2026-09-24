@@ -18,12 +18,11 @@ from collections.abc import Iterable
 from sqlalchemy import Connection, Inspector, inspect, text
 from sqlalchemy.exc import OperationalError
 
-from dbdelta.dialects import Dialect
+from dbdelta.dialects import Dialect, ascii_lower
 from dbdelta.loaders._draft import ForeignKeyDraft, SchemaDraft, TableDraft
 from dbdelta.loaders.base import LoadError, LoadResult
 from dbdelta.loaders.ddl import DdlReader
 from dbdelta.loaders.normalize import parse_default, parse_type
-from dbdelta.loaders.types import ascii_lower
 from dbdelta.model import Column, PrimaryKey, ReferentialAction, UniqueConstraint
 
 _SQLITE = Dialect.SQLITE
