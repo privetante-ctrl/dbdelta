@@ -6,11 +6,15 @@ from pathlib import Path
 
 import psycopg
 import pytest
+from hypothesis import settings
 from tests.support.databases import POSTGRES_URL_VARIABLE, load_sqlite_connection
 from tests.support.fixtures import fixture_pairs
 
 from dbdelta.dialects import Dialect
 from dbdelta.loaders import LoadResult
+
+# Run with --hypothesis-profile=thorough to try ten times as many generated schemas.
+settings.register_profile("thorough", max_examples=1000)
 
 LiveSQLite = Callable[[str], LoadResult]
 Snapshot = Callable[[Path, str], None]
