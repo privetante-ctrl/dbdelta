@@ -36,6 +36,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Down migrations with `--down`: the migration back from the target, with the steps that
   cannot restore lost data marked `IRREVERSIBLE` in the SQL and in every report.
 - Property-based tests with Hypothesis over generated schemas and schema pairs.
+- Documentation: README with real example output, `docs/ARCHITECTURE.md` with the key design
+  decisions, `CONTRIBUTING.md` on adding risk rules and dialects, and `examples/` with a
+  schema pair, an annotated `dbdelta.toml` and a GitHub Actions workflow that comments on pull
+  requests.
+- `Dockerfile` running dbdelta as a non-root user, and CI jobs that build the image and the
+  wheel, require 90 % coverage of the diff, risk and plan layers, and run the property tests
+  with 1000 examples weekly.
 - `docker-compose.yml` with a PostgreSQL server for the tests; CI covers PostgreSQL 14, 16
   and 18.
 - Risk assessment with 15 rules, each with a level, an explanation, a safer alternative and,
@@ -52,3 +59,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   old type.
 - `DEFAULT -1` on non-`integer` numeric columns loaded differently from a live PostgreSQL
   database.
+- The `sqlite-rebuild` rule did not report a table rebuilt because every column is replaced.

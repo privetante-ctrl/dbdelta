@@ -1,7 +1,53 @@
 # Architecture
 
-> Work in progress: this document grows with each layer. It records the decisions that are
-> not obvious from the code and the reasons behind them.
+This document records how dbdelta is built and, above all, why: the decisions that are not
+obvious from the code. [CONTRIBUTING.md](../CONTRIBUTING.md) explains how to extend it.
+
+```
+ schema A ─┐                    ┌─► risk ──────┐
+ (file/DB) ├─► load & normalize ┼─► diff ──────┼─► plan ─► emit ─► SQL + report
+ schema B ─┘                    └──────────────┘
+```
+
+Each side is loaded into the same immutable model, compared into a list of typed changes,
+assessed by risk rules, ordered into a plan and written as SQL for one dialect.
+
+## Key decisions
+
+- **Normalize once, in the loaders, then compare with `==`.** A file says `int`, PostgreSQL
+  reports `integer`; a file says `DEFAULT 'x'`, PostgreSQL reports `'x'::text`. If the diff
+  had to know such equivalences, every comparison would be a place to forget one, and every
+  forgotten one is a false migration step. Instead, all spellings are folded into one
+  canonical form while loading, and the diff compares plain values. The equivalence tests
+  (a file and the database built from it must load into the same model) keep the loaders
+  honest.
+- **An immutable, canonical model.** Frozen dataclasses of tuples can be shared, hashed and
+  compared without copies; sorting unordered collections on construction makes equal schemas
+  equal. Changes, plans and findings reference model objects freely.
+- **Typed changes, not SQL, are the core currency.** The diff produces a union of small
+  records (`AddColumn`, `AlterColumnType`, ...). Risk rules, the planner and emitters match
+  on them, and mypy checks that every kind is handled. Nothing above the emitters sees SQL
+  text, so a rule cannot depend on how a statement happens to be written.
+- **Risk rules are plain functions in a registry.** A rule is a function registered under a
+  stable code. It gets a change (or all of them) and a context with the source, the target
+  and what is known about the data, and returns findings. Adding a rule touches nothing
+  else, reports and `--ignore-rule` use the code, and tests exercise each rule on its own.
+- **Dialects are facts plus two adapters.** What differs between databases (name folding,
+  which ALTERs exist, which type changes rewrite a table, default constraint names) lives in
+  `dialects/` as data and predicates. A dialect then needs a loader and an emitter; the
+  diff, the rules and the planner consult traits instead of checking for a dialect by name.
+- **SQLite gets rebuilds, not approximations.** SQLite's `ALTER TABLE` cannot change a
+  column or a constraint. Rather than skipping such changes or emitting SQL that fails,
+  dbdelta rebuilds the table with the procedure SQLite documents, keeps the rows, checks
+  foreign keys afterwards, and flags every rebuild in the report because it copies the table
+  and drops triggers.
+- **Nothing destructive is silent.** Drops carry a `danger` finding, a drop and add that
+  look like a rename are reported as such, rename detection is opt-in, and down migrations
+  say which steps cannot bring data back.
+- **Real databases decide correctness.** Unit tests pin the behaviour, but the guarantee is
+  the round-trip: build A in SQLite and PostgreSQL, run the generated SQL, read the schema
+  back and require B, then run the down migration and require A. Property-based tests do
+  the same for generated schemas.
 
 ## Layers
 
@@ -241,7 +287,7 @@ before migrating (duplicates, NULLs, rows without a parent, values that do not f
 Emitters turn a plan into a `Script`: statements grouped into blocks, each block either run
 in a transaction (`BEGIN` ... `COMMIT`) or not. Every statement carries a one-line
 description of its change as a comment, so the SQL reads as a reviewed change list.
-Identifiers are always quoted and literals always escaped through `emit/quoting.py`; the
+Identifiers are always quoted and literals always escaped through `dialects/quoting.py`; the
 only SQL taken verbatim is canonical SQL that came from a schema (defaults, CHECK
 conditions, index expressions).
 
@@ -257,12 +303,13 @@ conditions, index expressions).
   everywhere would be wrong: `USING col::varchar(10)` silently truncates, while a plain type
   change fails on values that are too long.
 - Unnamed constraints are dropped by the name PostgreSQL gave them, computed like
-  PostgreSQL's `makeObjectName` (including truncation to 63 bytes) and checked against
-  PostgreSQL 16 in the tests.
+  PostgreSQL's `makeObjectName` (including truncation to 63 bytes) in
+  `dialects/postgresql.py` and checked against PostgreSQL in the tests.
 - An enum type losing or reordering values is renamed, recreated, and its columns converted
   through `text`, with their defaults dropped and restored around the conversion.
 - A column that becomes an identity or serial column gets its sequence moved past the
-  values already in the table.
+  values already in the table. A column that stops being serial loses its sequence, found
+  through `pg_get_serial_sequence` because its name is not part of the schema.
 
 ### SQLite
 
