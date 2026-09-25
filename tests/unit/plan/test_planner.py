@@ -427,3 +427,42 @@ def test_the_plan_source_is_the_schema_after_renames() -> None:
     planned = plan_migration(changes, source, target, PG)
 
     assert [table.name for table in planned.source.tables] == ["b"]
+
+
+def test_sqlite_rebuilds_a_table_whose_every_column_is_replaced() -> None:
+    assert steps("CREATE TABLE t (a int)", "CREATE TABLE t (b int)", SQLITE) == ["rebuild table t"]
+    assert steps("CREATE TABLE t (a int, c int)", "CREATE TABLE t (b int, c int)", SQLITE) == [
+        "drop column t.a",
+        "add column t.b integer",
+    ]
+
+
+def test_checks_and_indexes_reading_a_retyped_column_are_recreated() -> None:
+    before = """
+        CREATE TABLE t (a int CHECK (a > 0), b int);
+        CREATE INDEX ix_part ON t (b) WHERE a > 1;
+        CREATE INDEX ix_plain ON t (a);
+    """
+    after = before.replace("a int", "a bigint")
+
+    assert steps(before, after) == [
+        'drop check constraint on t ("a" > 0)',
+        'drop index ix_part on t (b) where "a" > 1',
+        "change type of t.a from integer to bigint",
+        'add check constraint on t ("a" > 0)',
+        'create index ix_part on t (b) where "a" > 1',
+    ]
+
+
+def test_a_dropped_table_releases_the_keys_it_references_first() -> None:
+    before = """
+        CREATE TABLE p (id int PRIMARY KEY);
+        CREATE TABLE c (p_id int REFERENCES p);
+    """
+    after = "CREATE TABLE p (id int NOT NULL)"
+
+    assert steps(before, after) == [
+        "drop foreign key c (p_id) -> p (id)",
+        "drop primary key on p (id)",
+        "drop table c",
+    ]

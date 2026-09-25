@@ -65,7 +65,16 @@ from dbdelta.diff import (
     SetNotNull,
     apply_renames,
 )
-from dbdelta.model import Column, EnumType, ForeignKey, Index, Schema, Table
+from dbdelta.model import (
+    CheckConstraint,
+    Column,
+    EnumType,
+    Expression,
+    ForeignKey,
+    Index,
+    Schema,
+    Table,
+)
 from dbdelta.plan.graph import order_by_dependencies
 from dbdelta.plan.operations import Operation, RebuildTable, ReplaceEnum, describe_operation
 
@@ -141,6 +150,8 @@ class _Planner:
             for position, column in enumerate(table.columns)
         }
         changes += self._release_replaced_defaults(changes)
+        if self._dialect.traits.alters_table_definitions:
+            changes += self._recreate_dependents_of_retyped_columns(changes, source, target)
         if self._checks_foreign_keys:
             changes += self._rebuild_foreign_keys_on_replaced_keys(changes, source)
         dropped = [change for change in changes if isinstance(change, DropTable)]
@@ -231,15 +242,66 @@ class _Planner:
         }
         rebuilt: list[Change] = []
         for table in source.tables:
-            if self._key(table.name) in dropped_tables:
-                continue
             for fk in table.foreign_keys:
                 if (
-                    self._key_ref(fk) in dropped_keys
-                    and (self._key(table.name), fk) not in dropped_fks
+                    self._key_ref(fk) not in dropped_keys
+                    or (self._key(table.name), fk) in dropped_fks
                 ):
-                    rebuilt += [DropForeignKey(table.name, fk), AddForeignKey(table.name, fk)]
+                    continue
+                rebuilt.append(DropForeignKey(table.name, fk))
+                # A table that is dropped goes after the keys, so its foreign keys go first.
+                if self._key(table.name) not in dropped_tables:
+                    rebuilt.append(AddForeignKey(table.name, fk))
         return rebuilt
+
+    def _recreate_dependents_of_retyped_columns(
+        self, changes: Sequence[Change], source: Schema, target: Schema
+    ) -> list[Change]:
+        """Drop and re-add CHECK constraints and indexes whose SQL reads a retyped column.
+
+        PostgreSQL keeps them through ALTER COLUMN ... TYPE by adding a cast to the old type,
+        so they would no longer be what the target schema declares.
+        """
+        retyped = {
+            (self._key(change.table), self._key(change.column))
+            for change in changes
+            if isinstance(change, AlterColumnType)
+        }
+        dropped: set[tuple[str, CheckConstraint | Index]] = set()
+        for change in changes:
+            if isinstance(change, DropCheck):
+                dropped.add((self._key(change.table), change.constraint))
+            elif isinstance(change, DropIndex):
+                dropped.add((self._key(change.table), change.index))
+        recreated: list[Change] = []
+        for table in source.tables:
+            key = self._key(table.name)
+            columns = {column for owner, column in retyped if owner == key}
+            new = self._find_table(target, table.name)
+            if not columns or new is None:
+                continue
+
+            for check in table.check_constraints:
+                if (key, check) not in dropped and self._reads(columns, [check.expression]):
+                    same_check = next(
+                        (c for c in new.check_constraints if c.expression == check.expression),
+                        check,
+                    )
+                    recreated += [DropCheck(table.name, check), AddCheck(table.name, same_check)]
+            for index in table.indexes:
+                expressions = [e.key for e in index.elements if isinstance(e.key, Expression)]
+                if index.where is not None:
+                    expressions.append(index.where)
+                if (key, index) not in dropped and self._reads(columns, expressions):
+                    same_index = next(
+                        (i for i in new.indexes if replace(i, name=index.name) == index), index
+                    )
+                    recreated += [DropIndex(table.name, index), AddIndex(table.name, same_index)]
+        return recreated
+
+    def _reads(self, columns: set[str], expressions: Iterable[Expression]) -> bool:
+        """Whether any of ``expressions`` reads one of the (name-keyed) ``columns``."""
+        return any(self._key(name) in columns for e in expressions for name in e.columns)
 
     def _replace_enums(
         self, changes: Sequence[Change], source: Schema, target: Schema
@@ -284,10 +346,13 @@ class _Planner:
 
         rebuilt: dict[str, RebuildTable] = {}
         for key, changes in by_table.items():
-            if all(_alters_in_place(change) for change in changes):
-                continue
             old, new = self._find_table(source, key), self._find_table(target, key)
-            if old is not None and new is not None:
+            if old is None or new is None:
+                continue
+            dropped = {self._key(c.column.name) for c in changes if isinstance(c, DropColumn)}
+            # Columns are dropped before new ones are added, and SQLite cannot drop the last.
+            drops_every_column = dropped >= {self._key(column.name) for column in old.columns}
+            if drops_every_column or not all(_alters_in_place(change) for change in changes):
                 rebuilt[key] = RebuildTable(old, new, tuple(changes))
 
         result: list[Operation] = [
