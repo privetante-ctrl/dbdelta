@@ -23,15 +23,22 @@ PG = Dialect.POSTGRESQL
 SQLITE = Dialect.SQLITE
 
 
-def plan(before: str, after: str, dialect: Dialect = PG) -> list[Operation]:
+def plan(
+    before: str, after: str, dialect: Dialect = PG, *, detect_renames: bool = False
+) -> list[Operation]:
     source = load_ddl(before, dialect).schema
     target = load_ddl(after, dialect).schema
-    changes = diff_schemas(source, target, dialect)
+    changes = diff_schemas(source, target, dialect, detect_renames=detect_renames)
     return list(plan_migration(changes, source, target, dialect).operations)
 
 
-def steps(before: str, after: str, dialect: Dialect = PG) -> list[str]:
-    return [describe_operation(operation) for operation in plan(before, after, dialect)]
+def steps(
+    before: str, after: str, dialect: Dialect = PG, *, detect_renames: bool = False
+) -> list[str]:
+    return [
+        describe_operation(operation)
+        for operation in plan(before, after, dialect, detect_renames=detect_renames)
+    ]
 
 
 def test_every_operation_type_has_a_phase() -> None:
@@ -392,3 +399,31 @@ def test_removing_enum_values_recreates_the_type_and_its_columns() -> None:
 )
 def test_identity_changes_respect_not_null(before: str, after: str, expected: list[str]) -> None:
     assert steps(before, after) == expected
+
+
+@pytest.mark.parametrize("dialect", [PG, SQLITE])
+def test_renames_run_first_and_later_steps_use_the_new_names(dialect: Dialect) -> None:
+    before = "CREATE TABLE users (id int PRIMARY KEY, nick text, email text, bio text)"
+    after = (
+        "CREATE TABLE app_users (id int PRIMARY KEY, nick_name text, email text NOT NULL, bio text)"
+    )
+
+    described = steps(before, after, dialect, detect_renames=True)
+
+    assert described[:2] == [
+        "rename table users to app_users",
+        "rename column app_users.nick to nick_name",
+    ]
+    assert described[2] == (
+        "make app_users.email NOT NULL" if dialect is PG else "rebuild table app_users"
+    )
+
+
+def test_the_plan_source_is_the_schema_after_renames() -> None:
+    source = load_ddl("CREATE TABLE a (x int, y int)", PG).schema
+    target = load_ddl("CREATE TABLE b (x int, y int)", PG).schema
+    changes = diff_schemas(source, target, PG, detect_renames=True)
+
+    planned = plan_migration(changes, source, target, PG)
+
+    assert [table.name for table in planned.source.tables] == ["b"]

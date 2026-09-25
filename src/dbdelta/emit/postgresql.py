@@ -5,9 +5,14 @@ from typing import ClassVar, assert_never
 from dbdelta.dialects import Dialect, name_key
 from dbdelta.dialects.postgresql import (
     backs_foreign_key,
+    check_name,
     default_name,
+    foreign_key_name,
+    index_name,
     is_builtin,
     needs_explicit_cast,
+    primary_key_name,
+    unique_name,
 )
 from dbdelta.dialects.quoting import quote_identifier, quote_literal, quote_qualified
 from dbdelta.diff import (
@@ -32,23 +37,21 @@ from dbdelta.diff import (
     DropPrimaryKey,
     DropTable,
     DropUnique,
+    RenameColumn,
+    RenameTable,
     ReorderColumns,
     SetDefault,
     SetNotNull,
 )
-from dbdelta.emit.base import EmitOptions, Emitter, RiskNotes, index_key_names
+from dbdelta.emit.base import EmitOptions, Emitter, RiskNotes
 from dbdelta.emit.script import Block, Script, Statement
 from dbdelta.model import (
-    CheckConstraint,
     Column,
     DataType,
     EnumType,
-    ForeignKey,
     Identity,
     Index,
-    PrimaryKey,
     Schema,
-    UniqueConstraint,
 )
 from dbdelta.plan import MigrationPlan, Operation, RebuildTable, ReplaceEnum, describe_operation
 
@@ -125,6 +128,13 @@ class PostgresEmitter(Emitter):
                 ]
             case DropTable(table):
                 return [f"DROP TABLE {quote_identifier(table.name)}"]
+            case RenameTable(table, new_name):
+                return [f"{_alter(table)} RENAME TO {quote_identifier(new_name)}"]
+            case RenameColumn(table, column, new_name):
+                return [
+                    f"{_alter(table)} RENAME COLUMN {quote_identifier(column)} "
+                    f"TO {quote_identifier(new_name)}"
+                ]
             case AddColumn(table, column):
                 return [f"{_alter(table)} ADD COLUMN {self.column_sql(column)}"]
             case DropColumn(table, column):
@@ -144,19 +154,19 @@ class PostgresEmitter(Emitter):
             case AddPrimaryKey(table, key):
                 return [f"{_alter(table)} ADD {self.primary_key_sql(key)}"]
             case DropPrimaryKey(table, key):
-                return [_drop_constraint(table, self._key_name(table, key))]
+                return [_drop_constraint(table, primary_key_name(table, key))]
             case AddUnique(table, unique):
                 return [f"{_alter(table)} ADD {self.unique_sql(unique)}"]
             case DropUnique(table, unique):
-                return [_drop_constraint(table, self._unique_name(table, unique))]
+                return [_drop_constraint(table, unique_name(table, unique))]
             case AddCheck(table, check):
                 return [f"{_alter(table)} ADD {self.check_sql(check)}"]
             case DropCheck(table, check):
-                return [_drop_constraint(table, self._check_name(table, check))]
+                return [_drop_constraint(table, check_name(table, check))]
             case AddForeignKey(table, fk):
                 return [f"{_alter(table)} ADD {self.foreign_key_sql(fk)}"]
             case DropForeignKey(table, fk):
-                return [_drop_constraint(table, self._foreign_key_name(table, fk))]
+                return [_drop_constraint(table, foreign_key_name(table, fk))]
             case AddIndex(table, index):
                 concurrently = self._concurrent(operation, plan, options)
                 return [self.create_index(table, index, concurrently=concurrently)]
@@ -192,7 +202,7 @@ class PostgresEmitter(Emitter):
         return " ".join(parts)
 
     def index_name(self, table: str, index: Index) -> str:
-        return index.name or default_name(table, index_key_names(index), "idx")
+        return index_name(table, index)
 
     def _create_enum(self, enum: EnumType) -> str:
         values = ", ".join(quote_literal(value) for value in enum.values)
@@ -308,20 +318,6 @@ class PostgresEmitter(Emitter):
         else:
             return False
         return not backs_foreign_key(schema, table, index)
-
-    def _key_name(self, table: str, key: PrimaryKey) -> str:
-        return key.name or default_name(table, [], "pkey")
-
-    def _unique_name(self, table: str, unique: UniqueConstraint) -> str:
-        return unique.name or default_name(table, unique.columns, "key")
-
-    def _check_name(self, table: str, check: CheckConstraint) -> str:
-        columns = sorted(check.expression.columns)
-        # PostgreSQL names a check after its column only when it reads exactly one.
-        return check.name or default_name(table, columns if len(columns) == 1 else [], "check")
-
-    def _foreign_key_name(self, table: str, fk: ForeignKey) -> str:
-        return fk.name or default_name(table, fk.columns, "fkey")
 
 
 def _alter(table: str) -> str:

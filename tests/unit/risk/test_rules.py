@@ -11,10 +11,17 @@ PG = Dialect.POSTGRESQL
 SQLITE = Dialect.SQLITE
 
 
-def findings(before: str, after: str, dialect: Dialect = PG, **context: Any) -> list[Finding]:
+def findings(
+    before: str,
+    after: str,
+    dialect: Dialect = PG,
+    *,
+    detect_renames: bool = False,
+    **context: Any,
+) -> list[Finding]:
     source = load_ddl(before, dialect).schema
     target = load_ddl(after, dialect).schema
-    changes = diff_schemas(source, target, dialect)
+    changes = diff_schemas(source, target, dialect, detect_renames=detect_renames)
     return list(assess(changes, RiskContext(dialect, source, target, **context)))
 
 
@@ -350,6 +357,74 @@ class TestSQLiteRebuild:
         assert "sqlite-rebuild" not in {rule for rule, _ in found(TABLE, after)}
 
 
+class TestRenames:
+    BEFORE = "CREATE TABLE users (id int PRIMARY KEY, nickname text, email text);"
+    AFTER = "CREATE TABLE users (id int PRIMARY KEY, nick_name text, email text);"
+
+    def test_a_drop_and_add_of_the_same_shape_may_be_a_rename(self) -> None:
+        finding = only(self.BEFORE, self.AFTER, "possible-rename")
+
+        assert finding.level is Level.WARNING
+        assert finding.subject == "column users.nickname"
+        assert "looks like a rename (confidence 96%)" in finding.message
+        assert [type(change).__name__ for change in finding.changes] == [
+            "DropColumn",
+            "AddColumn",
+        ]
+
+    @pytest.mark.parametrize(
+        "after",
+        [
+            "CREATE TABLE users (id int PRIMARY KEY, nick_name int, email text);",
+            "CREATE TABLE users (id int PRIMARY KEY, phone text, email text);",
+        ],
+        ids=["other type", "unrelated name"],
+    )
+    def test_unlike_columns_are_not_renames(self, after: str) -> None:
+        assert "possible-rename" not in {rule for rule, _ in found(self.BEFORE, after)}
+
+    def test_a_table_with_the_same_columns_may_be_a_rename(self) -> None:
+        after = self.BEFORE.replace("users", "accounts")
+
+        finding = only(self.BEFORE, after, "possible-rename")
+
+        assert finding.subject == "table users"
+        assert "confidence 72%" in finding.message
+        assert "deletes all of its rows" in finding.message
+
+    def test_detected_renames_warn_about_the_old_name_only(self) -> None:
+        before = self.BEFORE.replace("email text", "email text, bio text")
+        after = self.AFTER.replace("users", "app_users").replace(
+            "email text", "email text, bio text"
+        )
+
+        assert found(before, after, detect_renames=True) == {("rename", Level.WARNING)}
+        assert [
+            finding.message
+            for finding in findings(before, after, detect_renames=True)
+            if finding.subject.startswith("column")
+        ] == [
+            "Renaming column app_users.nickname to nick_name keeps its data, but application "
+            "code, views, functions and triggers that still use the old name fail. The "
+            "database updates keys, indexes and foreign keys itself."
+        ]
+
+    def test_unrelated_tables_are_not_renames(self) -> None:
+        after = "CREATE TABLE accounts (id int PRIMARY KEY, name text, email text);"
+
+        assert "possible-rename" not in {rule for rule, _ in found(self.BEFORE, after)}
+
+    def test_rules_after_a_rename_know_the_table_by_its_new_name(self) -> None:
+        after = "CREATE TABLE app_users (id int PRIMARY KEY, nickname text);"
+
+        dropped = only(
+            self.BEFORE, after, "drop-column", detect_renames=True, row_estimates={"users": 0}
+        )
+
+        assert dropped.subject == "app_users.email"
+        assert dropped.level is Level.INFO
+
+
 def test_every_rule_is_exercised_and_explains_itself() -> None:
     before = """
         CREATE TYPE mood AS ENUM ('sad', 'meh', 'ok');
@@ -365,8 +440,11 @@ def test_every_rule_is_exercised_and_explains_itself() -> None:
         CREATE TABLE orders (id int PRIMARY KEY, user_id int REFERENCES users);
         CREATE INDEX ix_orders_user ON orders (user_id);
     """
-    everything = findings(before, after) + findings(
-        "CREATE TABLE t (a INT)", "CREATE TABLE t (a TEXT)", SQLITE
+    everything = (
+        findings(before, after)
+        + findings("CREATE TABLE t (a INT)", "CREATE TABLE t (a TEXT)", SQLITE)
+        + findings(TestRenames.BEFORE, TestRenames.AFTER)
+        + findings(TestRenames.BEFORE, TestRenames.AFTER, detect_renames=True)
     )
 
     assert {finding.rule for finding in everything} == {rule.code for rule in registered_rules()}

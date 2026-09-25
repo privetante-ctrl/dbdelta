@@ -2,8 +2,18 @@
 
 import re
 from collections.abc import Sequence
+from dataclasses import replace
 
-from dbdelta.model import DataType, Index, Schema
+from dbdelta.model import (
+    CheckConstraint,
+    DataType,
+    ForeignKey,
+    Index,
+    PrimaryKey,
+    Schema,
+    Table,
+    UniqueConstraint,
+)
 
 MAX_NAME_BYTES = 63
 """Longest identifier PostgreSQL keeps (NAMEDATALEN - 1); longer names are truncated."""
@@ -84,6 +94,75 @@ def default_name(table: str, columns: Sequence[str], suffix: str) -> str:
     if column_part:
         parts.append(_clip(column_part, column_length))
     return "_".join([*parts, suffix])
+
+
+def primary_key_name(table: str, key: PrimaryKey) -> str:
+    return key.name or default_name(table, [], "pkey")
+
+
+def unique_name(table: str, unique: UniqueConstraint) -> str:
+    return unique.name or default_name(table, unique.columns, "key")
+
+
+def check_name(table: str, check: CheckConstraint) -> str:
+    columns = sorted(check.expression.columns)
+    # PostgreSQL names a check after its column only when it reads exactly one.
+    return check.name or default_name(table, columns if len(columns) == 1 else [], "check")
+
+
+def foreign_key_name(table: str, fk: ForeignKey) -> str:
+    return fk.name or default_name(table, fk.columns, "fkey")
+
+
+def index_name(table: str, index: Index) -> str:
+    return index.name or default_name(table, index_key_names(index), "idx")
+
+
+def index_key_names(index: Index) -> list[str]:
+    """Column names PostgreSQL derives index names from.
+
+    Expressions are named after their outermost function, or ``expr``, and repeated names get
+    a number, as PostgreSQL's ``ChooseIndexColumnNames`` does.
+    """
+    names: list[str] = []
+    for element in index.elements:
+        if isinstance(element.key, str):
+            name = element.key
+        else:
+            head = element.key.sql.split("(", 1)[0]
+            name = head.lower() if head.isidentifier() else "expr"
+        candidate, number = name, 0
+        while candidate in names:
+            number += 1
+            candidate = f"{name}{number}"
+        names.append(candidate)
+    return names
+
+
+def name_implicit_objects(table: Table) -> Table:
+    """``table`` with its constraints and indexes named as PostgreSQL named them.
+
+    PostgreSQL derives these names from the table and column names when it creates the
+    objects, and keeps them when the table or a column is renamed later.
+    """
+    key = table.primary_key
+    return replace(
+        table,
+        primary_key=replace(key, name=primary_key_name(table.name, key)) if key else None,
+        foreign_keys=tuple(
+            replace(fk, name=foreign_key_name(table.name, fk)) for fk in table.foreign_keys
+        ),
+        unique_constraints=tuple(
+            replace(unique, name=unique_name(table.name, unique))
+            for unique in table.unique_constraints
+        ),
+        check_constraints=tuple(
+            replace(check, name=check_name(table.name, check)) for check in table.check_constraints
+        ),
+        indexes=tuple(
+            replace(index, name=index_name(table.name, index)) for index in table.indexes
+        ),
+    )
 
 
 def needs_explicit_cast(old: DataType, new: DataType) -> bool:

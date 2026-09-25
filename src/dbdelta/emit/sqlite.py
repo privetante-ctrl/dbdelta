@@ -3,10 +3,21 @@
 from typing import ClassVar
 
 from dbdelta.dialects import Dialect, name_key
+from dbdelta.dialects.postgresql import index_key_names
 from dbdelta.dialects.quoting import quote_identifier
 from dbdelta.dialects.sqlite import is_constant
-from dbdelta.diff import AddColumn, AddIndex, AddTable, DropColumn, DropIndex, DropTable, describe
-from dbdelta.emit.base import EmitOptions, Emitter, RiskNotes, index_key_names
+from dbdelta.diff import (
+    AddColumn,
+    AddIndex,
+    AddTable,
+    DropColumn,
+    DropIndex,
+    DropTable,
+    RenameColumn,
+    RenameTable,
+    describe,
+)
+from dbdelta.emit.base import EmitOptions, Emitter, RiskNotes
 from dbdelta.emit.script import Block, Script, Statement
 from dbdelta.model import Column, DataType, Identity, Index, PrimaryKey, Table
 from dbdelta.plan import MigrationPlan, Operation, RebuildTable, describe_operation
@@ -69,6 +80,15 @@ class SQLiteEmitter(Emitter):
                 sql += [self.create_index(table.name, index) for index in table.indexes]
             case DropTable(table):
                 sql = [f"DROP TABLE {quote_identifier(table.name)}"]
+            case RenameTable(table, new_name):
+                sql = [
+                    f"ALTER TABLE {quote_identifier(table)} RENAME TO {quote_identifier(new_name)}"
+                ]
+            case RenameColumn(table, column, new_name):
+                sql = [
+                    f"ALTER TABLE {quote_identifier(table)} RENAME COLUMN "
+                    f"{quote_identifier(column)} TO {quote_identifier(new_name)}"
+                ]
             case AddColumn(table, column):
                 sql = [
                     f"ALTER TABLE {quote_identifier(table)} ADD COLUMN {self.column_sql(column)}"

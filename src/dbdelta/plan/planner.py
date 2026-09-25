@@ -1,25 +1,28 @@
 """Order changes so that every statement finds the objects it needs.
 
-Operations run in phases: everything that depends on something about to go is removed
-first, then objects are dropped, then created, and foreign keys come last because they
-depend on tables, columns and keys all being in place:
+Operations run in phases: renames come first, because the other changes use the new names;
+then everything that depends on something about to go is removed, then objects are
+dropped, then created, and foreign keys come last because they depend on tables, columns
+and keys all being in place:
 
-1. drop foreign keys
-2. drop indexes, CHECK, UNIQUE and primary key constraints
-3. drop columns
-4. drop tables, dependents first
-5. create, extend and recreate enum types
-6. create tables, referenced tables first
-7. add columns
-8. alter columns, or rebuild tables where ALTER TABLE cannot change them
-9. add primary key, UNIQUE and CHECK constraints
-10. create indexes
-11. add foreign keys
-12. drop enum types, once no column uses them
+1. rename tables
+2. rename columns
+3. drop foreign keys
+4. drop indexes, CHECK, UNIQUE and primary key constraints
+5. drop columns
+6. drop tables, dependents first
+7. create, extend and recreate enum types
+8. create tables, referenced tables first
+9. add columns
+10. alter columns, or rebuild tables where ALTER TABLE cannot change them
+11. add primary key, UNIQUE and CHECK constraints
+12. create indexes
+13. add foreign keys
+14. drop enum types, once no column uses them
 
 In dialects that check foreign keys in DDL, foreign keys that form a cycle between new
-tables are split off into step 11, and foreign keys that depend on a key being replaced
-are dropped in step 1 and added back in step 11. A column whose type and default both
+tables are split off into step 13, and foreign keys that depend on a key being replaced
+are dropped in step 3 and added back in step 13. A column whose type and default both
 change loses its old default before the type changes.
 
 In dialects whose ALTER TABLE cannot change column definitions or constraints (SQLite),
@@ -55,41 +58,46 @@ from dbdelta.diff import (
     DropPrimaryKey,
     DropTable,
     DropUnique,
+    RenameColumn,
+    RenameTable,
     ReorderColumns,
     SetDefault,
     SetNotNull,
+    apply_renames,
 )
 from dbdelta.model import Column, EnumType, ForeignKey, Index, Schema, Table
 from dbdelta.plan.graph import order_by_dependencies
 from dbdelta.plan.operations import Operation, RebuildTable, ReplaceEnum, describe_operation
 
 _PHASES: dict[type, int] = {
-    DropForeignKey: 1,
-    DropIndex: 2,
-    DropCheck: 2,
-    DropUnique: 2,
-    DropPrimaryKey: 2,
-    DropColumn: 3,
-    DropTable: 4,
-    AddEnum: 5,
-    AlterEnum: 5,
-    ReplaceEnum: 5,
-    AddTable: 6,
-    AddColumn: 7,
-    DropDefault: 8,
-    DropNotNull: 8,
-    AlterColumnType: 8,
-    AlterIdentity: 8,
-    SetDefault: 8,
-    SetNotNull: 8,
-    ReorderColumns: 8,
-    RebuildTable: 8,
-    AddPrimaryKey: 9,
-    AddUnique: 9,
-    AddCheck: 9,
-    AddIndex: 10,
-    AddForeignKey: 11,
-    DropEnum: 12,
+    RenameTable: 1,
+    RenameColumn: 2,
+    DropForeignKey: 3,
+    DropIndex: 4,
+    DropCheck: 4,
+    DropUnique: 4,
+    DropPrimaryKey: 4,
+    DropColumn: 5,
+    DropTable: 6,
+    AddEnum: 7,
+    AlterEnum: 7,
+    ReplaceEnum: 7,
+    AddTable: 8,
+    AddColumn: 9,
+    DropDefault: 10,
+    DropNotNull: 10,
+    AlterColumnType: 10,
+    AlterIdentity: 10,
+    SetDefault: 10,
+    SetNotNull: 10,
+    ReorderColumns: 10,
+    RebuildTable: 10,
+    AddPrimaryKey: 11,
+    AddUnique: 11,
+    AddCheck: 11,
+    AddIndex: 12,
+    AddForeignKey: 13,
+    DropEnum: 14,
 }
 
 _KeyRef = tuple[str, frozenset[str]]
@@ -108,8 +116,14 @@ class MigrationPlan:
 def plan_migration(
     changes: Iterable[Change], source: Schema, target: Schema, dialect: Dialect
 ) -> MigrationPlan:
-    """Order ``changes``, which turn ``source`` into ``target``, for execution."""
-    operations = _Planner(dialect).plan(list(changes), source, target)
+    """Order ``changes``, which turn ``source`` into ``target``, for execution.
+
+    The plan's ``source`` is the schema after the renames among ``changes``, which is the
+    schema the other operations address.
+    """
+    changes = list(changes)
+    source = apply_renames(source, changes, dialect)
+    operations = _Planner(dialect).plan(changes, source, target)
     return MigrationPlan(tuple(operations), source, target, dialect)
 
 

@@ -25,14 +25,25 @@ from dbdelta.diff.changes import (
     DropPrimaryKey,
     DropTable,
     DropUnique,
+    RenameChange,
+    RenameColumn,
+    RenameTable,
     ReorderColumns,
     SetDefault,
     SetNotNull,
 )
 from dbdelta.diff.compare import diff_schemas
 from dbdelta.diff.describe import describe
+from dbdelta.diff.renames import (
+    RENAME_CONFIDENCE,
+    PossibleRename,
+    apply_renames,
+    names_before_renames,
+    possible_renames,
+)
 
 __all__ = [
+    "RENAME_CONFIDENCE",
     "AddCheck",
     "AddColumn",
     "AddEnum",
@@ -57,9 +68,16 @@ __all__ = [
     "DropPrimaryKey",
     "DropTable",
     "DropUnique",
+    "PossibleRename",
+    "RenameChange",
+    "RenameColumn",
+    "RenameTable",
     "ReorderColumns",
     "SetDefault",
     "SetNotNull",
+    "apply_renames",
     "describe",
     "diff_schemas",
+    "names_before_renames",
+    "possible_renames",
 ]

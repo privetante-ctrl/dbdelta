@@ -25,6 +25,8 @@ from dbdelta.diff.changes import (
     DropPrimaryKey,
     DropTable,
     DropUnique,
+    RenameColumn,
+    RenameTable,
     ReorderColumns,
     SetDefault,
     SetNotNull,
@@ -48,6 +50,10 @@ def describe(change: Change) -> str:
             return f"create table {table.name}"
         case DropTable(table):
             return f"drop table {table.name}"
+        case RenameTable(table, new_name):
+            return f"rename table {table} to {new_name}"
+        case RenameColumn(table, column, new_name):
+            return f"rename column {table}.{column} to {new_name}"
         case AddColumn(table, column):
             return f"add column {table}.{column_definition(column)}"
         case DropColumn(table, column):

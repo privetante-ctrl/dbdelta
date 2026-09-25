@@ -157,27 +157,6 @@ def _changes_of(operation: Operation) -> set[Change]:
             return {operation}
 
 
-def index_key_names(index: Index) -> list[str]:
-    """Column names PostgreSQL and dbdelta derive index names from.
-
-    Expressions are named after their outermost function, or ``expr``, and repeated names get
-    a number, as PostgreSQL's ``ChooseIndexColumnNames`` does.
-    """
-    names: list[str] = []
-    for element in index.elements:
-        if isinstance(element.key, str):
-            name = element.key
-        else:
-            head = element.key.sql.split("(", 1)[0]
-            name = head.lower() if head.isidentifier() else "expr"
-        candidate, number = name, 0
-        while candidate in names:
-            number += 1
-            candidate = f"{name}{number}"
-        names.append(candidate)
-    return names
-
-
 def _constraint(name: str | None) -> str:
     return f"CONSTRAINT {quote_identifier(name)} " if name is not None else ""
 

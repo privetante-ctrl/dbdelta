@@ -6,9 +6,9 @@ to silence it. Most rules look at one change at a time and are declared with
 """
 
 from collections.abc import Callable, Collection, Iterable, Iterator, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
-from dbdelta.diff import Change
+from dbdelta.diff import Change, RenameChange, names_before_renames
 from dbdelta.risk.context import RiskContext
 from dbdelta.risk.findings import Finding
 
@@ -68,12 +68,25 @@ def assess(
     unknown = sorted(set(skip) - _RULES.keys())
     if unknown:
         raise ValueError(f"unknown risk rule(s): {', '.join(unknown)}")
+    context = context.after_renames(changes)
     findings = [
-        finding
+        _runnable_before(finding, changes, context)
         for code, registered in _RULES.items()
         if code not in skip
         for finding in registered.check(changes, context)
     ]
     return tuple(
         sorted(findings, key=lambda found: (-found.level.severity, found.subject, found.rule))
+    )
+
+
+def _runnable_before(finding: Finding, changes: Sequence[Change], context: RiskContext) -> Finding:
+    """``finding`` with its check query using the names the database has before migrating.
+
+    Rules see the changes with the names after any renames, but the query runs first.
+    """
+    if finding.check_sql is None or not any(isinstance(c, RenameChange) for c in changes):
+        return finding
+    return replace(
+        finding, check_sql=names_before_renames(finding.check_sql, changes, context.dialect)
     )

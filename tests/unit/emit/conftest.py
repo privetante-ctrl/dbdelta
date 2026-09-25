@@ -20,10 +20,12 @@ def migrate() -> Migrate:
         after: str,
         dialect: Dialect = Dialect.POSTGRESQL,
         options: EmitOptions | None = None,
+        *,
+        detect_renames: bool = False,
     ) -> Script:
         source = load_ddl(before, dialect).schema
         target = load_ddl(after, dialect).schema
-        changes = diff_schemas(source, target, dialect)
+        changes = diff_schemas(source, target, dialect, detect_renames=detect_renames)
         return emit_migration(plan_migration(changes, source, target, dialect), options)
 
     return build

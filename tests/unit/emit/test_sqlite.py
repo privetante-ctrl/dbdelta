@@ -119,3 +119,15 @@ def test_changes_that_need_a_rebuild_cannot_be_emitted_in_place() -> None:
 
 def test_empty_plan_gives_an_empty_script() -> None:
     assert EMITTER.emit(MigrationPlan((), Schema(), Schema(), SQLITE)).blocks == ()
+
+
+def test_renames_use_alter_table(migrate: Migrate) -> None:
+    before = "CREATE TABLE users (id INTEGER PRIMARY KEY, nick TEXT, email TEXT, bio TEXT)"
+    after = "CREATE TABLE app_users (id INTEGER PRIMARY KEY, nick_name TEXT, email TEXT, bio TEXT)"
+
+    script = migrate(before, after, Dialect.SQLITE, detect_renames=True)
+
+    assert [statement.sql for statement in script.statements()] == [
+        'ALTER TABLE "users" RENAME TO "app_users"',
+        'ALTER TABLE "app_users" RENAME COLUMN "nick" TO "nick_name"',
+    ]

@@ -27,10 +27,14 @@ from dbdelta.diff.changes import (
     DropPrimaryKey,
     DropTable,
     DropUnique,
+    RenameChange,
+    RenameColumn,
+    RenameTable,
     ReorderColumns,
     SetDefault,
     SetNotNull,
 )
+from dbdelta.diff.renames import apply_renames, possible_renames
 from dbdelta.model import (
     CheckConstraint,
     Column,
@@ -53,7 +57,12 @@ _T = TypeVar("_T", bound=_Named)
 
 
 def diff_schemas(
-    source: Schema, target: Schema, dialect: Dialect, *, strict_column_order: bool = False
+    source: Schema,
+    target: Schema,
+    dialect: Dialect,
+    *,
+    strict_column_order: bool = False,
+    detect_renames: bool = False,
 ) -> tuple[Change, ...]:
     """Return the changes that turn ``source`` into ``target``.
 
@@ -61,8 +70,29 @@ def diff_schemas(
     by definition; their names only count when both sides name them explicitly, so a
     constraint the database named on its own never shows up as a difference. The order of
     table columns is ignored unless ``strict_column_order`` is set.
+
+    With ``detect_renames``, every :func:`possible rename <possible_renames>` becomes a
+    :class:`RenameTable` or :class:`RenameColumn` at the start of the changes; the other
+    changes then use the new names. Tables are paired first, so that the columns of a
+    renamed table can be compared and renamed too.
     """
-    return tuple(_Differ(dialect, strict_column_order=strict_column_order).schemas(source, target))
+    differ = _Differ(dialect, strict_column_order=strict_column_order)
+    changes = tuple(differ.schemas(source, target))
+    if not detect_renames:
+        return changes
+    tables = _renames(changes, RenameTable)
+    renamed = apply_renames(source, tables, dialect)
+    columns = _renames(tuple(differ.schemas(renamed, target)), RenameColumn)
+    renamed = apply_renames(renamed, columns, dialect)
+    return (*tables, *columns, *differ.schemas(renamed, target))
+
+
+def _renames(changes: Sequence[Change], kind: type[RenameChange]) -> list[Change]:
+    return [
+        candidate.rename
+        for candidate in possible_renames(changes)
+        if isinstance(candidate.rename, kind)
+    ]
 
 
 class _Differ:

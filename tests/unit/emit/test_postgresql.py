@@ -281,3 +281,23 @@ def test_emitter_rejects_plans_for_other_dialects() -> None:
 
     with pytest.raises(ValueError, match="cannot write a sqlite migration as postgresql SQL"):
         EMITTER.emit(plan)
+
+
+def test_renames_keep_the_constraint_names_postgresql_gave(migrate: Migrate) -> None:
+    before = """
+        CREATE TABLE orgs (id int PRIMARY KEY);
+        CREATE TABLE users (id int PRIMARY KEY, org int REFERENCES orgs, nick text UNIQUE,
+                            email text, bio text);
+    """
+    after = """
+        CREATE TABLE orgs (id int PRIMARY KEY);
+        CREATE TABLE app_users (id int PRIMARY KEY, org int, nick_name text, email text,
+                                bio text);
+    """
+
+    assert sql(migrate(before, after, detect_renames=True)) == [
+        'ALTER TABLE "users" RENAME TO "app_users"',
+        'ALTER TABLE "app_users" RENAME COLUMN "nick" TO "nick_name"',
+        'ALTER TABLE "app_users" DROP CONSTRAINT "users_org_fkey"',
+        'ALTER TABLE "app_users" DROP CONSTRAINT "users_nick_key"',
+    ]

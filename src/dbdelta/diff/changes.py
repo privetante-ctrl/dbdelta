@@ -1,8 +1,9 @@
 """Typed changes that turn one schema into another.
 
 Each change is a small immutable record of one difference. Changes inside a table carry the
-table name as it exists in the source schema, because that is the name the migration has
-to address. ``Change`` is the union of all of them, so consumers can match exhaustively.
+table and column names the migration has to address: the names in the source schema, or
+the new names when the table or column is renamed, because renames run first. ``Change``
+is the union of all of them, so consumers can match exhaustively.
 """
 
 from dataclasses import dataclass
@@ -52,6 +53,23 @@ class DropTable:
     """Drop a table together with its constraints and indexes."""
 
     table: Table
+
+
+@dataclass(frozen=True, slots=True)
+class RenameTable:
+    """Rename a table, keeping its rows. Only found when rename detection is on."""
+
+    table: str
+    new_name: str
+
+
+@dataclass(frozen=True, slots=True)
+class RenameColumn:
+    """Rename a column, keeping its values. ``table`` is the table's new name, if renamed."""
+
+    table: str
+    column: str
+    new_name: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -205,6 +223,15 @@ ConstraintChange: TypeAlias = (
     | DropIndex
 )
 
+RenameChange: TypeAlias = RenameTable | RenameColumn
+
 Change: TypeAlias = (
-    AddEnum | DropEnum | AlterEnum | AddTable | DropTable | ColumnChange | ConstraintChange
+    AddEnum
+    | DropEnum
+    | AlterEnum
+    | AddTable
+    | DropTable
+    | RenameChange
+    | ColumnChange
+    | ConstraintChange
 )
