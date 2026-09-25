@@ -11,7 +11,7 @@ from rich.table import Table
 from rich.text import Text
 
 from dbdelta.cli.analysis import Analysis
-from dbdelta.cli.report import Verdict, loader_warnings, summary
+from dbdelta.cli.report import Verdict, loader_warnings, risk_label, summary
 from dbdelta.diff import describe
 from dbdelta.risk import Finding, Level
 
@@ -22,18 +22,24 @@ def text_report(analysis: Analysis, verdict: Verdict | None = None) -> Renderabl
     """The report of ``dbdelta diff`` and ``dbdelta check``."""
     parts: list[RenderableType] = [
         Text.assemble(
-            (analysis.source.location, "cyan"),
+            ("Down: " if analysis.down else "", "bold"),
+            (analysis.start.location, "cyan"),
             " -> ",
-            (analysis.target.location, "cyan"),
+            (analysis.end.location, "cyan"),
             f" ({analysis.dialect})",
         )
     ]
     warnings = loader_warnings(analysis)
     if warnings:
         parts.append(_section("Not compared"))
-        parts += [Padding(Text(warning, style="yellow"), (0, 0, 0, 2)) for warning in warnings]
+        parts += [_indent(Text(warning, style="yellow")) for warning in warnings]
     if analysis.changes:
         parts += [_section("Changes"), _changes(analysis)]
+    if analysis.irreversible:
+        parts.append(_section("Irreversible"))
+        for step in analysis.irreversible:
+            heading = Text.assemble(("IRREVERSIBLE", "bold magenta"), "  ", describe(step.change))
+            parts += [Text(), heading, _indent(Text(step.reason))]
     if analysis.findings:
         parts.append(_section("Risks"))
         parts += [_finding(finding) for finding in analysis.findings]
@@ -54,7 +60,9 @@ def _changes(analysis: Analysis) -> Table:
     table.add_column("Risk")
     for number, change in enumerate(analysis.changes, 1):
         level = analysis.level_of(change)
-        risk = Text(level, style=LEVEL_STYLES[level]) if level is not None else Text()
+        risk = Text(risk_label(analysis, change))
+        if level is not None:
+            risk.stylize(LEVEL_STYLES[level], 0, len(level))
         table.add_row(str(number), Text(describe(change)), risk)
     return table
 

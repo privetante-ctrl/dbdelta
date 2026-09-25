@@ -15,11 +15,13 @@ def json_report(analysis: Analysis, verdict: Verdict | None = None) -> str:
     document: dict[str, Any] = {
         "dbdelta": __version__,
         "dialect": analysis.dialect.value,
+        "direction": "down" if analysis.down else "up",
         "source": _source(analysis.source),
         "target": _source(analysis.target),
         "summary": {
             "changes": len(analysis.changes),
             **{level.value: analysis.count(level) for level in LEVELS},
+            "irreversible": len(analysis.irreversible),
         },
         "changes": [
             {
@@ -27,6 +29,7 @@ def json_report(analysis: Analysis, verdict: Verdict | None = None) -> str:
                 "table": change_table(change),
                 "description": describe(change),
                 "risk": analysis.level_of(change),
+                "irreversible": analysis.irreversible_reason(change),
             }
             for change in analysis.changes
         ],

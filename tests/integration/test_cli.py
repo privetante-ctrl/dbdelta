@@ -120,7 +120,13 @@ def test_json_report(snapshot: Snapshot) -> None:
     result = mixed("diff", "--format", "json")
     report = json.loads(result.stdout)
 
-    assert report["summary"] == {"changes": 16, "danger": 2, "warning": 6, "info": 0}
+    assert report["summary"] == {
+        "changes": 16,
+        "danger": 2,
+        "warning": 6,
+        "info": 0,
+        "irreversible": 0,
+    }
     for finding in report["findings"]:
         assert all(report["changes"][index]["risk"] for index in finding["changes"])
     snapshot(SNAPSHOTS / "diff.json", without_version(result.stdout))
@@ -322,6 +328,59 @@ def test_reports_list_what_was_not_compared(tmp_path: Path, output_format: str) 
     assert "CREATE VIEW is not supported" in result.stdout
     # Only formats that are not the text report repeat warnings on stderr.
     assert (result.stderr == "") is (output_format == "text")
+
+
+def test_down_migrates_back_and_marks_irreversible_steps() -> None:
+    result = mixed("plan", "--down")
+
+    assert result.exit_code == 0
+    assert result.stdout.startswith("-- Down migration from b.sql back to a.sql (postgresql)")
+    assert "-- 16 changes, 10 risks: 5 danger, 5 warning; 2 irreversible.\n" in result.stdout
+    assert (
+        "-- create table legacy_scores\n"
+        "-- IRREVERSIBLE: The up migration dropped table legacy_scores with its rows; this "
+        "creates it\n--   again, empty.\n"
+    ) in result.stdout
+
+
+def test_down_reports_irreversible_steps(snapshot: Snapshot) -> None:
+    report = json.loads(mixed("diff", "--down", "--format", "json").stdout)
+
+    assert report["direction"] == "down"
+    assert report["summary"]["irreversible"] == 2
+    assert [change["description"] for change in report["changes"] if change["irreversible"]] == [
+        "create table legacy_scores",
+        "add column players.nickname text",
+    ]
+    snapshot(SNAPSHOTS / "diff-down.txt", without_version(mixed("diff", "--down").stdout))
+
+
+def test_check_of_the_down_migration_fails_on_its_own_dangers() -> None:
+    assert mixed("check", "--down", "--allow-destructive").exit_code == 0
+    assert mixed("check", "--down").exit_code == EXIT_CHECK_FAILED
+
+
+def test_renames_are_reported_and_detected_on_request(tmp_path: Path) -> None:
+    source = tmp_path / "users.sql"
+    target = tmp_path / "accounts.sql"
+    source.write_text("CREATE TABLE users (id int PRIMARY KEY, nickname text);", encoding="utf-8")
+    target.write_text("CREATE TABLE users (id int PRIMARY KEY, nick_name text);", encoding="utf-8")
+
+    reported = run("diff", source, target)
+    detected = run("plan", source, target, "--detect-renames")
+
+    assert "this looks like a rename (confidence 96%)" in " ".join(reported.stdout.split())
+    assert 'ALTER TABLE "users" RENAME COLUMN "nickname" TO "nick_name";' in detected.stdout
+    assert "DROP COLUMN" not in detected.stdout
+
+
+def test_rename_detection_can_be_configured(tmp_path: Path) -> None:
+    (tmp_path / "dbdelta.toml").write_text("detect-renames = true\n", encoding="utf-8")
+    (tmp_path / "c.sql").write_text("CREATE TABLE t (id int, created date);", encoding="utf-8")
+    (tmp_path / "d.sql").write_text("CREATE TABLE t (id int, created_on date);", encoding="utf-8")
+
+    assert "RENAME COLUMN" in run("plan", "c.sql", "d.sql").stdout
+    assert "RENAME COLUMN" not in run("plan", "c.sql", "d.sql", "--no-detect-renames").stdout
 
 
 def test_sqlglot_does_not_log_statements_dbdelta_reports_itself() -> None:

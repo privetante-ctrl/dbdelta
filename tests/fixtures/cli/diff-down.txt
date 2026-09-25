@@ -1,0 +1,106 @@
+Down: b.sql -> a.sql (postgresql)
+
+Changes
+ #   Change                                                                Risk
+───────────────────────────────────────────────────────────────────────────────────────
+ 1   drop table leagues                                                    danger
+ 2   create table legacy_scores                                            irreversible
+ 3   drop column players.email                                             danger
+ 4   add column players.nickname text                                      irreversible
+ 5   change type of players.name from varchar(100) to varchar(50)          danger
+ 6   change type of players.rating from bigint to integer                  danger
+ 7   set default of players.rating to 1000
+ 8   allow NULL in players.rating
+ 9   drop foreign key players (team_id) -> teams (id) ON DELETE SET NULL
+10   add foreign key players (team_id) -> teams (id)                       warning
+11   drop check constraint on players ("rating" >= 0)
+12   add check constraint on players ("rating" > 0)                        warning
+13   drop unique index ux_players_email on players (email)
+14   create index ix_players_nickname on players (nickname)                warning
+15   drop column teams.league_id                                           danger
+16   drop foreign key teams (league_id) -> leagues (id)
+
+Irreversible
+
+IRREVERSIBLE  create table legacy_scores
+  The up migration dropped table legacy_scores with its rows; this creates it again, empty.
+
+IRREVERSIBLE  add column players.nickname text
+  The up migration dropped players.nickname with its values; this adds it again with every value
+  NULL.
+
+Risks
+
+DANGER  drop-column  players.email
+  Dropping players.email permanently deletes its value in every row.
+  Safer: Stop reading and writing the column in the application and deploy that first, back the
+  values up, then drop the column in a later migration (expand and contract).
+  Check before migrating:
+    SELECT count(*) FROM "players" WHERE "players"."email" IS NOT NULL
+
+DANGER  narrowing-type  players.name
+  players.name changes from varchar(100) to the narrower varchar(50). Values longer than 50
+  characters make the migration fail.
+  Safer: Check the data with the query below and clean up values that do not fit, or keep the wider
+  type.
+  Check before migrating:
+    SELECT count(*) FROM "players" WHERE length("players"."name") > 50
+
+DANGER  narrowing-type  players.rating
+  players.rating changes from bigint to the narrower integer. Values outside the range of integer
+  make the migration fail.
+  Safer: Check the data with the query below and clean up values that do not fit, or keep the wider
+  type.
+  Check before migrating:
+    SELECT count(*) FROM "players" WHERE "players"."rating" NOT BETWEEN -2147483648 AND 2147483647
+
+DANGER  drop-table  table leagues
+  Dropping leagues permanently deletes all of its rows.
+  Safer: Back the data up first, for example with CREATE TABLE ... AS SELECT, or stop using the
+  table and drop it in a later release once nothing reads it.
+  Check before migrating:
+    SELECT count(*) FROM "leagues"
+
+DANGER  drop-column  teams.league_id
+  Dropping teams.league_id permanently deletes its value in every row.
+  Safer: Stop reading and writing the column in the application and deploy that first, back the
+  values up, then drop the column in a later migration (expand and contract).
+  Check before migrating:
+    SELECT count(*) FROM "teams" WHERE "teams"."league_id" IS NOT NULL
+
+WARNING  check-violations  check on players ("rating" > 0)
+  Rows already in players may violate CHECK ("rating" > 0), which makes the migration fail.
+  PostgreSQL checks every row while holding an ACCESS EXCLUSIVE lock that blocks reads and writes.
+  Safer: Fix the violating rows first. On a large table, add the constraint with NOT VALID and run
+  ALTER TABLE ... VALIDATE CONSTRAINT separately; validating does not block writes.
+  Check before migrating:
+    SELECT count(*) FROM "players" WHERE NOT ("rating" > 0)
+
+WARNING  foreign-key  foreign key players (team_id) -> teams
+  Adding the foreign key checks every row of players while holding SHARE ROW EXCLUSIVE locks on
+  players and teams, which block writes to both; rows without a match make the migration fail.
+  Safer: Add the constraint with NOT VALID, which only takes a brief lock, then run ALTER TABLE ...
+  VALIDATE CONSTRAINT in a separate transaction; validating does not block writes.
+  Check before migrating:
+    SELECT count(*) FROM "players" AS child WHERE child."team_id" IS NOT NULL AND NOT EXISTS (SELECT
+    1 FROM "teams" AS parent WHERE parent."id" = child."team_id")
+
+WARNING  index-lock  index ix_players_nickname on players
+  Building ix_players_nickname blocks inserts, updates and deletes on players (SHARE lock) until the
+  whole table has been indexed.
+  Safer: Run with --concurrent-indexes to build it with CREATE INDEX CONCURRENTLY outside the
+  transaction: it takes longer but does not block writes.
+
+WARNING  type-rewrite  players.name
+  Changing players.name from varchar(100) to varchar(50) makes PostgreSQL rewrite the whole table
+  and its indexes while holding an ACCESS EXCLUSIVE lock that blocks reads and writes.
+  Safer: On a large table, add a new column of the new type, backfill it in batches, switch the
+  application over and drop the old column; otherwise run the migration in a maintenance window.
+
+WARNING  type-rewrite  players.rating
+  Changing players.rating from bigint to integer makes PostgreSQL rewrite the whole table and its
+  indexes while holding an ACCESS EXCLUSIVE lock that blocks reads and writes.
+  Safer: On a large table, add a new column of the new type, backfill it in batches, switch the
+  application over and drop the old column; otherwise run the migration in a maintenance window.
+
+16 changes, 10 risks: 5 danger, 5 warning; 2 irreversible.

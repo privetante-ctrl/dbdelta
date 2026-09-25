@@ -32,6 +32,7 @@ class Settings:
     ignore_tables: tuple[str, ...] = ()
     ignore_rules: tuple[str, ...] = ()
     strict_column_order: bool = False
+    detect_renames: bool = False
     concurrent_indexes: bool = False
     allow_destructive: bool = False
     large_table_rows: int = DEFAULT_LARGE_TABLE_ROWS
@@ -44,6 +45,7 @@ class Settings:
         ignore_tables: tuple[str, ...] = (),
         ignore_rules: tuple[str, ...] = (),
         strict_column_order: bool | None = None,
+        detect_renames: bool | None = None,
         concurrent_indexes: bool | None = None,
         allow_destructive: bool | None = None,
         large_table_rows: int | None = None,
@@ -56,6 +58,7 @@ class Settings:
             ignore_tables=self.ignore_tables + ignore_tables,
             ignore_rules=self.ignore_rules + ignore_rules,
             strict_column_order=_pick(strict_column_order, self.strict_column_order),
+            detect_renames=_pick(detect_renames, self.detect_renames),
             concurrent_indexes=_pick(concurrent_indexes, self.concurrent_indexes),
             allow_destructive=_pick(allow_destructive, self.allow_destructive),
             large_table_rows=_pick(large_table_rows, self.large_table_rows),
@@ -111,6 +114,7 @@ def parse_config(data: Mapping[str, object]) -> Settings:
         ignore_tables=_strings(data, "ignore-tables"),
         ignore_rules=_strings(data, "ignore-rules"),
         strict_column_order=_flag(data, "strict-column-order", defaults.strict_column_order),
+        detect_renames=_flag(data, "detect-renames", defaults.detect_renames),
         concurrent_indexes=_flag(data, "concurrent-indexes", defaults.concurrent_indexes),
         allow_destructive=_flag(data, "allow-destructive", defaults.allow_destructive),
         large_table_rows=_row_count(data, "large-table-rows", defaults.large_table_rows),

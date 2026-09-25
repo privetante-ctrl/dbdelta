@@ -3,7 +3,7 @@
 import re
 
 from dbdelta.cli.analysis import Analysis
-from dbdelta.cli.report import Verdict, loader_warnings, migration_sql, summary
+from dbdelta.cli.report import Verdict, loader_warnings, migration_sql, risk_label, summary
 from dbdelta.diff import describe
 from dbdelta.risk import Finding, Level
 
@@ -19,8 +19,10 @@ def markdown_report(analysis: Analysis, verdict: Verdict | None = None) -> str:
     if verdict is not None:
         mark = "✅" if verdict.passed else "❌"
         lines += [f"{mark} **{escape(verdict.explain())}**", ""]
+    direction = "Down migration from" if analysis.down else "From"
+    back = " back" if analysis.down else ""
     lines += [
-        f"From {code(analysis.source.location)} to {code(analysis.target.location)} "
+        f"{direction} {code(analysis.start.location)}{back} to {code(analysis.end.location)} "
         f"({analysis.dialect}).",
         "",
     ]
@@ -33,9 +35,15 @@ def markdown_report(analysis: Analysis, verdict: Verdict | None = None) -> str:
         lines += ["| # | Change | Risk |", "|--:|--------|------|"]
         for number, change in enumerate(analysis.changes, 1):
             level = analysis.level_of(change)
-            risk = f"{_LEVEL_MARKS[level]} {level}" if level is not None else ""
+            mark = f"{_LEVEL_MARKS[level]} " if level is not None else ""
+            risk = f"{mark}{risk_label(analysis, change)}"
             lines.append(f"| {number} | {escape(describe(change))} | {risk} |")
         lines.append("")
+    if analysis.irreversible:
+        lines += ["#### Irreversible", ""]
+        for step in analysis.irreversible:
+            heading = f"- ⛔ **{escape(describe(step.change))}**"
+            lines += [heading, "", f"  {escape(step.reason)}", ""]
     if analysis.findings:
         lines += ["#### Risks", ""]
         for finding in analysis.findings:

@@ -1,6 +1,7 @@
 {
   "dbdelta": "<version>",
   "dialect": "postgresql",
+  "direction": "up",
   "source": {
     "location": "a.sql",
     "warnings": []
@@ -13,104 +14,121 @@
     "changes": 16,
     "danger": 2,
     "warning": 6,
-    "info": 0
+    "info": 0,
+    "irreversible": 0
   },
   "changes": [
     {
       "kind": "add_table",
       "table": "leagues",
       "description": "create table leagues",
-      "risk": null
+      "risk": null,
+      "irreversible": null
     },
     {
       "kind": "drop_table",
       "table": "legacy_scores",
       "description": "drop table legacy_scores",
-      "risk": "danger"
+      "risk": "danger",
+      "irreversible": null
     },
     {
       "kind": "drop_column",
       "table": "players",
       "description": "drop column players.nickname",
-      "risk": "danger"
+      "risk": "danger",
+      "irreversible": null
     },
     {
       "kind": "add_column",
       "table": "players",
       "description": "add column players.email text",
-      "risk": null
+      "risk": null,
+      "irreversible": null
     },
     {
       "kind": "alter_column_type",
       "table": "players",
       "description": "change type of players.name from varchar(50) to varchar(100)",
-      "risk": null
+      "risk": null,
+      "irreversible": null
     },
     {
       "kind": "alter_column_type",
       "table": "players",
       "description": "change type of players.rating from integer to bigint",
-      "risk": "warning"
+      "risk": "warning",
+      "irreversible": null
     },
     {
       "kind": "set_default",
       "table": "players",
       "description": "set default of players.rating to 1200",
-      "risk": null
+      "risk": null,
+      "irreversible": null
     },
     {
       "kind": "set_not_null",
       "table": "players",
       "description": "make players.rating NOT NULL",
-      "risk": "warning"
+      "risk": "warning",
+      "irreversible": null
     },
     {
       "kind": "drop_foreign_key",
       "table": "players",
       "description": "drop foreign key players (team_id) -> teams (id)",
-      "risk": null
+      "risk": null,
+      "irreversible": null
     },
     {
       "kind": "add_foreign_key",
       "table": "players",
       "description": "add foreign key players (team_id) -> teams (id) ON DELETE SET NULL",
-      "risk": "warning"
+      "risk": "warning",
+      "irreversible": null
     },
     {
       "kind": "drop_check",
       "table": "players",
       "description": "drop check constraint on players (\"rating\" > 0)",
-      "risk": null
+      "risk": null,
+      "irreversible": null
     },
     {
       "kind": "add_check",
       "table": "players",
       "description": "add check constraint on players (\"rating\" >= 0)",
-      "risk": "warning"
+      "risk": "warning",
+      "irreversible": null
     },
     {
       "kind": "drop_index",
       "table": "players",
       "description": "drop index ix_players_nickname on players (nickname)",
-      "risk": null
+      "risk": null,
+      "irreversible": null
     },
     {
       "kind": "add_index",
       "table": "players",
       "description": "create unique index ux_players_email on players (email)",
-      "risk": "warning"
+      "risk": "warning",
+      "irreversible": null
     },
     {
       "kind": "add_column",
       "table": "teams",
       "description": "add column teams.league_id integer",
-      "risk": null
+      "risk": null,
+      "irreversible": null
     },
     {
       "kind": "add_foreign_key",
       "table": "teams",
       "description": "add foreign key teams (league_id) -> leagues (id)",
-      "risk": "warning"
+      "risk": "warning",
+      "irreversible": null
     }
   ],
   "findings": [

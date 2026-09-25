@@ -1,6 +1,6 @@
 """Run the whole pipeline for two sources: load, diff, assess, plan and emit."""
 
-from collections.abc import Collection, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, replace
 from fnmatch import fnmatchcase
 
@@ -18,7 +18,14 @@ from dbdelta.loaders import (
 )
 from dbdelta.model import Schema
 from dbdelta.plan import plan_migration
-from dbdelta.risk import Finding, Level, RiskContext, assess
+from dbdelta.risk import (
+    Finding,
+    Irreversible,
+    Level,
+    RiskContext,
+    assess,
+    irreversible_changes,
+)
 
 DEFAULT_DIALECT = Dialect.POSTGRESQL
 
@@ -35,15 +42,54 @@ class LoadedSource:
 
 
 @dataclass(frozen=True, slots=True)
+class Migration:
+    """The changes from one schema to another, their risks and their SQL."""
+
+    changes: tuple[Change, ...]
+    findings: tuple[Finding, ...]
+    irreversible: tuple[Irreversible, ...]
+    script: Script
+
+
+@dataclass(frozen=True, slots=True)
 class Analysis:
-    """Everything dbdelta found out about a migration, ready to be reported."""
+    """Everything dbdelta found out about a migration, ready to be reported.
+
+    ``source`` and ``target`` are the two sides as the user gave them. A ``down`` analysis
+    is about the migration from the target back to the source.
+    """
 
     dialect: Dialect
     source: LoadedSource
     target: LoadedSource
-    changes: tuple[Change, ...]
-    findings: tuple[Finding, ...]
-    script: Script
+    migration: Migration
+    down: bool = False
+
+    @property
+    def changes(self) -> tuple[Change, ...]:
+        return self.migration.changes
+
+    @property
+    def findings(self) -> tuple[Finding, ...]:
+        return self.migration.findings
+
+    @property
+    def irreversible(self) -> tuple[Irreversible, ...]:
+        return self.migration.irreversible
+
+    @property
+    def script(self) -> Script:
+        return self.migration.script
+
+    @property
+    def start(self) -> LoadedSource:
+        """The side the migration starts from."""
+        return self.target if self.down else self.source
+
+    @property
+    def end(self) -> LoadedSource:
+        """The side the migration leads to."""
+        return self.source if self.down else self.target
 
     def count(self, level: Level) -> int:
         return sum(1 for finding in self.findings if finding.level is level)
@@ -53,41 +99,70 @@ class Analysis:
         levels = [finding.level for finding in self.findings if change in finding.changes]
         return max(levels, key=lambda level: level.severity, default=None)
 
+    def irreversible_reason(self, change: Change) -> str | None:
+        return next((step.reason for step in self.irreversible if step.change == change), None)
 
-def analyze(source: str, target: str, settings: Settings) -> Analysis:
+
+def analyze(source: str, target: str, settings: Settings, *, down: bool = False) -> Analysis:
     """Compare the schema at ``source`` with the desired one at ``target``.
 
-    Raises :class:`~dbdelta.loaders.LoadError` when a source cannot be read and
-    :class:`ValueError` for a risk rule name that does not exist.
+    With ``down``, the migration goes the other way, from ``target`` back to ``source``.
+    Raises :class:`~dbdelta.loaders.LoadError` when a source cannot be read.
     """
     dialect = resolve_dialect((source, target), settings.dialect)
     loaded_source = load_source(source, dialect, settings.schema)
     loaded_target = load_source(target, dialect, settings.schema)
     old = without_tables(loaded_source.schema, settings.ignore_tables, dialect)
     new = without_tables(loaded_target.schema, settings.ignore_tables, dialect)
-
-    changes = diff_schemas(old, new, dialect, strict_column_order=settings.strict_column_order)
-    context = RiskContext(
-        dialect,
-        old,
-        new,
-        row_estimates=loaded_source.row_estimates,
-        large_table_rows=settings.large_table_rows,
-        concurrent_indexes=settings.concurrent_indexes,
-    )
-    findings = assess(changes, context, skip=settings.ignore_rules)
-    plan = plan_migration(changes, old, new, dialect)
-    script = emit_migration(
-        plan, EmitOptions(concurrent_indexes=settings.concurrent_indexes), findings
-    )
+    if down:
+        migration = migrate(new, old, dialect, settings, loaded_target.row_estimates, down=True)
+    else:
+        migration = migrate(old, new, dialect, settings, loaded_source.row_estimates)
     return Analysis(
         dialect=dialect,
         source=_loaded(source, loaded_source),
         target=_loaded(target, loaded_target),
-        changes=changes,
-        findings=findings,
-        script=script,
+        migration=migration,
+        down=down,
     )
+
+
+def migrate(
+    source: Schema,
+    target: Schema,
+    dialect: Dialect,
+    settings: Settings,
+    row_estimates: Mapping[str, int] | None = None,
+    *,
+    down: bool = False,
+) -> Migration:
+    """Diff, assess, plan and write the migration from ``source`` to ``target``.
+
+    ``row_estimates`` are the row counts of the tables in ``source``, when known. With
+    ``down``, the migration undoes an earlier one and its steps that cannot restore lost
+    data are marked irreversible.
+    """
+    changes = diff_schemas(
+        source,
+        target,
+        dialect,
+        strict_column_order=settings.strict_column_order,
+        detect_renames=settings.detect_renames,
+    )
+    context = RiskContext(
+        dialect,
+        source,
+        target,
+        row_estimates=row_estimates or {},
+        large_table_rows=settings.large_table_rows,
+        concurrent_indexes=settings.concurrent_indexes,
+    )
+    findings = assess(changes, context, skip=settings.ignore_rules)
+    irreversible = irreversible_changes(changes) if down else ()
+    plan = plan_migration(changes, source, target, dialect)
+    options = EmitOptions(concurrent_indexes=settings.concurrent_indexes)
+    script = emit_migration(plan, options, findings, irreversible)
+    return Migration(changes, findings, irreversible, script)
 
 
 def resolve_dialect(sources: Sequence[str], configured: Dialect | None) -> Dialect:

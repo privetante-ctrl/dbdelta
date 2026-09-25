@@ -1,19 +1,21 @@
 import pytest
 
-from dbdelta.cli.analysis import Analysis, LoadedSource
+from dbdelta.cli.analysis import Analysis, LoadedSource, Migration
 from dbdelta.cli.report import (
     Verdict,
     change_kind,
     change_table,
     loader_warnings,
     migration_sql,
+    risk_label,
     summary,
+    title,
 )
 from dbdelta.dialects import Dialect
 from dbdelta.diff import AddColumn, AddEnum, AddTable, Change, DropColumn, SetNotNull
 from dbdelta.emit import Block, Script, Statement
 from dbdelta.model import Column, DataType, EnumType, Table
-from dbdelta.risk import Finding, Level
+from dbdelta.risk import Finding, Irreversible, Level
 
 COLUMN = Column("email", DataType("text"))
 ADD = AddColumn("users", COLUMN)
@@ -28,15 +30,15 @@ def _analysis(
     changes: tuple[Change, ...] = (),
     findings: tuple[Finding, ...] = (),
     warnings: tuple[str, ...] = (),
+    irreversible: tuple[Irreversible, ...] = (),
 ) -> Analysis:
     script = Script((Block((Statement("SELECT 1"),), transactional=True),)) if changes else Script()
     return Analysis(
         Dialect.POSTGRESQL,
         LoadedSource("a.sql", warnings),
         LoadedSource("postgresql://app:***@db/app", ()),
-        changes,
-        findings,
-        script,
+        Migration(changes, findings, irreversible, script),
+        down=bool(irreversible),
     )
 
 
@@ -54,6 +56,18 @@ def _analysis(
 )
 def test_summary(analysis: Analysis, text: str) -> None:
     assert summary(analysis) == text
+
+
+def test_down_migrations_count_and_label_irreversible_steps() -> None:
+    analysis = _analysis(
+        (ADD, DROP), (_finding(Level.WARNING, ADD),), irreversible=(Irreversible(ADD, "gone"),)
+    )
+
+    assert summary(analysis) == "2 changes, 1 risk: 1 warning; 1 irreversible."
+    assert title(analysis) == "Down migration from postgresql://app:***@db/app back to a.sql"
+    assert risk_label(analysis, ADD) == "warning, irreversible"
+    assert risk_label(analysis, DROP) == ""
+    assert "-- Steps marked IRREVERSIBLE restore structure" in migration_sql(analysis)
 
 
 def test_a_change_takes_the_level_of_its_most_severe_finding() -> None:

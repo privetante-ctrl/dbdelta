@@ -110,6 +110,18 @@ StrictColumnOrderOption = Annotated[
         show_default=False,
     ),
 ]
+DetectRenamesOption = Annotated[
+    bool | None,
+    typer.Option(
+        "--detect-renames/--no-detect-renames",
+        help="Turn a dropped and an added table or column that look alike into a RENAME.",
+        show_default=False,
+    ),
+]
+DownOption = Annotated[
+    bool,
+    typer.Option("--down", help="Migrate back from TARGET to SOURCE, marking IRREVERSIBLE steps."),
+]
 ConcurrentIndexesOption = Annotated[
     bool | None,
     typer.Option(
@@ -158,9 +170,11 @@ class _Options:
     ignore_tables: list[str] | None
     ignore_rules: list[str] | None
     strict_column_order: bool | None
+    detect_renames: bool | None
     concurrent_indexes: bool | None
     large_table_rows: int | None
     config: Path | None
+    down: bool
 
 
 @app.command()
@@ -175,25 +189,29 @@ def diff(
     ignore_table: IgnoreTableOption = None,
     ignore_rule: IgnoreRuleOption = None,
     strict_column_order: StrictColumnOrderOption = None,
+    detect_renames: DetectRenamesOption = None,
     concurrent_indexes: ConcurrentIndexesOption = None,
     large_table_rows: LargeTableRowsOption = None,
     config: ConfigOption = None,
+    down: DownOption = False,
 ) -> None:
     """Show what differs between SOURCE and TARGET and how risky migrating is.
 
     The default output is a report; --format sql prints the migration instead.
     """
     options = _Options(
-        dialect,
-        schema,
-        output_format,
-        output,
-        ignore_table,
-        ignore_rule,
-        strict_column_order,
-        concurrent_indexes,
-        large_table_rows,
-        config,
+        dialect=dialect,
+        schema=schema,
+        output_format=output_format,
+        output=output,
+        ignore_tables=ignore_table,
+        ignore_rules=ignore_rule,
+        strict_column_order=strict_column_order,
+        detect_renames=detect_renames,
+        concurrent_indexes=concurrent_indexes,
+        large_table_rows=large_table_rows,
+        config=config,
+        down=down,
     )
     _run(source, target, options, default_format=OutputFormat.TEXT)
 
@@ -210,25 +228,30 @@ def plan(
     ignore_table: IgnoreTableOption = None,
     ignore_rule: IgnoreRuleOption = None,
     strict_column_order: StrictColumnOrderOption = None,
+    detect_renames: DetectRenamesOption = None,
     concurrent_indexes: ConcurrentIndexesOption = None,
     large_table_rows: LargeTableRowsOption = None,
     config: ConfigOption = None,
+    down: DownOption = False,
 ) -> None:
     """Print the SQL that migrates SOURCE to TARGET.
 
-    Risks are written as comments above the statements they concern.
+    Risks are written as comments above the statements they concern. With --down, the SQL
+    migrates back from TARGET to SOURCE.
     """
     options = _Options(
-        dialect,
-        schema,
-        output_format,
-        output,
-        ignore_table,
-        ignore_rule,
-        strict_column_order,
-        concurrent_indexes,
-        large_table_rows,
-        config,
+        dialect=dialect,
+        schema=schema,
+        output_format=output_format,
+        output=output,
+        ignore_tables=ignore_table,
+        ignore_rules=ignore_rule,
+        strict_column_order=strict_column_order,
+        detect_renames=detect_renames,
+        concurrent_indexes=concurrent_indexes,
+        large_table_rows=large_table_rows,
+        config=config,
+        down=down,
     )
     _run(source, target, options, default_format=OutputFormat.SQL)
 
@@ -245,9 +268,11 @@ def check(
     ignore_table: IgnoreTableOption = None,
     ignore_rule: IgnoreRuleOption = None,
     strict_column_order: StrictColumnOrderOption = None,
+    detect_renames: DetectRenamesOption = None,
     concurrent_indexes: ConcurrentIndexesOption = None,
     large_table_rows: LargeTableRowsOption = None,
     config: ConfigOption = None,
+    down: DownOption = False,
     allow_destructive: AllowDestructiveOption = None,
 ) -> None:
     """Fail with exit code 1 if migrating SOURCE to TARGET is dangerous; for CI.
@@ -256,16 +281,18 @@ def check(
     --allow-destructive is given.
     """
     options = _Options(
-        dialect,
-        schema,
-        output_format,
-        output,
-        ignore_table,
-        ignore_rule,
-        strict_column_order,
-        concurrent_indexes,
-        large_table_rows,
-        config,
+        dialect=dialect,
+        schema=schema,
+        output_format=output_format,
+        output=output,
+        ignore_tables=ignore_table,
+        ignore_rules=ignore_rule,
+        strict_column_order=strict_column_order,
+        detect_renames=detect_renames,
+        concurrent_indexes=concurrent_indexes,
+        large_table_rows=large_table_rows,
+        config=config,
+        down=down,
     )
     _run(
         source,
@@ -288,7 +315,7 @@ def _run(
 ) -> None:
     settings = _settings(options, allow_destructive)
     try:
-        analysis = analyze(source, target, settings)
+        analysis = analyze(source, target, settings, down=options.down)
     except LoadError as error:
         _fail(str(error))
     verdict = Verdict.of(analysis, allow_destructive=settings.allow_destructive) if check else None
@@ -310,6 +337,7 @@ def _settings(options: _Options, allow_destructive: bool | None) -> Settings:
         ignore_tables=tuple(options.ignore_tables or ()),
         ignore_rules=tuple(options.ignore_rules or ()),
         strict_column_order=options.strict_column_order,
+        detect_renames=options.detect_renames,
         concurrent_indexes=options.concurrent_indexes,
         allow_destructive=allow_destructive,
         large_table_rows=options.large_table_rows,
