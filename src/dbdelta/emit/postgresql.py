@@ -276,8 +276,9 @@ class PostgresEmitter(Emitter):
         if old in _IDENTITY_KINDS:
             statements.append(f"{prefix} DROP IDENTITY")
         elif old is Identity.SERIAL:
-            # The sequence stays owned by the column and is dropped together with it.
-            statements.append(f"{prefix} DROP DEFAULT")
+            # Left behind, the serial's sequence would keep its name, which a later serial
+            # needs, and pg_get_serial_sequence could return it instead of a new identity's.
+            statements += [f"{prefix} DROP DEFAULT", _drop_serial_sequence(table, column)]
         if new in _IDENTITY_KINDS:
             statements += [
                 f"{prefix} ADD GENERATED {_IDENTITY_KINDS[new]} AS IDENTITY",
@@ -335,6 +336,22 @@ def _drop_constraint(table: str, name: str) -> str:
 def _regclass(name: str) -> str:
     """A quoted identifier as the text literal that functions taking regclass expect."""
     return quote_literal(quote_identifier(name))
+
+
+def _drop_serial_sequence(table: str, column: str) -> str:
+    # The sequence name is not part of the schema, and a rename may have left it under an
+    # old one; PostgreSQL knows it from the ownership.
+    sequence = f"pg_get_serial_sequence({_regclass(table)}, {quote_literal(column)})"
+    return _do(f"EXECUTE format('DROP SEQUENCE %s', {sequence});")
+
+
+def _do(body: str) -> str:
+    """An anonymous PL/pgSQL block, dollar-quoted with a tag that ``body`` cannot end."""
+    tag, number = "$dbdelta$", 0
+    while tag in body:
+        number += 1
+        tag = f"$dbdelta{number}$"
+    return f"DO {tag} BEGIN {body} END {tag}"
 
 
 def _continue_sequence(sequence: str, table: str, column: str) -> str:
