@@ -22,7 +22,7 @@ from dbdelta.model import (
     UniqueConstraint,
 )
 from dbdelta.plan import MigrationPlan, Operation, RebuildTable, ReplaceEnum
-from dbdelta.risk import Finding
+from dbdelta.risk import Finding, Irreversible
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,14 +46,16 @@ class Emitter(ABC):
         plan: MigrationPlan,
         options: EmitOptions | None = None,
         findings: Sequence[Finding] = (),
+        irreversible: Sequence[Irreversible] = (),
     ) -> Script:
         """Render ``plan`` as a script of SQL statements.
 
-        Risk ``findings`` are printed as comments above the statements they concern.
+        Risk ``findings`` and the ``irreversible`` steps of a down migration are printed as
+        comments above the statements they concern.
         """
         if plan.dialect is not self.dialect:
             raise ValueError(f"cannot write a {plan.dialect} migration as {self.dialect} SQL")
-        return self._emit(plan, options or EmitOptions(), RiskNotes(findings))
+        return self._emit(plan, options or EmitOptions(), RiskNotes(findings, irreversible))
 
     @abstractmethod
     def _emit(self, plan: MigrationPlan, options: EmitOptions, notes: "RiskNotes") -> Script: ...
@@ -133,13 +135,24 @@ class RiskNotes:
 
     _WIDTH = 94
 
-    def __init__(self, findings: Sequence[Finding]) -> None:
+    def __init__(
+        self, findings: Sequence[Finding], irreversible: Sequence[Irreversible] = ()
+    ) -> None:
         self._findings = tuple(findings)
+        self._irreversible = tuple(irreversible)
 
     def comment(self, operation: Operation, description: str) -> str:
-        """``description`` followed by one wrapped line per finding about ``operation``."""
+        """``description``, then one wrapped paragraph per note about ``operation``.
+
+        Irreversible steps come first: they are why the reader of a down migration must
+        stop and think.
+        """
         concerned = _changes_of(operation)
         lines = [description]
+        for step in self._irreversible:
+            if step.change in concerned:
+                text = f"IRREVERSIBLE: {step.reason}"
+                lines += textwrap.wrap(text, self._WIDTH, subsequent_indent="  ")
         for finding in self._findings:
             if concerned.intersection(finding.changes):
                 text = f"{finding.level.upper()} {finding.rule}: {finding.message}"

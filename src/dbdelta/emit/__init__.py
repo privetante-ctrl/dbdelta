@@ -8,7 +8,7 @@ from dbdelta.emit.postgresql import PostgresEmitter
 from dbdelta.emit.script import Block, Script, Statement
 from dbdelta.emit.sqlite import SQLiteEmitter
 from dbdelta.plan import MigrationPlan
-from dbdelta.risk import Finding
+from dbdelta.risk import Finding, Irreversible
 
 __all__ = [
     "Block",
@@ -32,7 +32,14 @@ def emitter_for(dialect: Dialect) -> Emitter:
 
 
 def emit_migration(
-    plan: MigrationPlan, options: EmitOptions | None = None, findings: Sequence[Finding] = ()
+    plan: MigrationPlan,
+    options: EmitOptions | None = None,
+    findings: Sequence[Finding] = (),
+    irreversible: Sequence[Irreversible] = (),
 ) -> Script:
-    """Write the SQL for ``plan`` in the plan's dialect, with ``findings`` as comments."""
-    return emitter_for(plan.dialect).emit(plan, options, findings)
+    """Write the SQL for ``plan`` in the plan's dialect, with notes as comments.
+
+    ``findings`` are risks; ``irreversible`` marks the steps of a down migration that
+    cannot restore lost data.
+    """
+    return emitter_for(plan.dialect).emit(plan, options, findings, irreversible)
