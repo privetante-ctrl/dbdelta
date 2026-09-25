@@ -8,6 +8,7 @@ column order must match too. PostgreSQL cannot reorder columns and appends added
 """
 
 import os
+import re
 import sqlite3
 from collections.abc import Iterator
 from contextlib import closing
@@ -32,6 +33,7 @@ from dbdelta.model import Schema
 SQLITE = Dialect.SQLITE
 PG = Dialect.POSTGRESQL
 SETTINGS = Settings()
+_REBUILT = re.compile(r'CREATE TABLE "_dbdelta_new_([^"]+)"')
 STRICT = Settings(strict_column_order=True)
 
 
@@ -43,8 +45,15 @@ def test_sqlite_migrates_both_ways(pair: tuple[Schema, Schema]) -> None:
         start = load_sqlite_connection(connection).schema
         assert diff_schemas(start, source, SQLITE, strict_column_order=True) == ()
 
-        connection.executescript(migrate(start, target, SQLITE, STRICT).script.render())
+        up = migrate(start, target, SQLITE, STRICT)
+        connection.executescript(up.script.render())
         reached = load_sqlite_connection(connection).schema
+        # The sqlite-rebuild rule must report exactly the tables the planner rebuilds.
+        assert set(_REBUILT.findall(up.script.render())) == {
+            finding.subject.removeprefix("table ")
+            for finding in up.findings
+            if finding.rule == "sqlite-rebuild"
+        }
         assert diff_schemas(reached, target, SQLITE, strict_column_order=True) == ()
 
         down = migrate(reached, start, SQLITE, STRICT, down=True)

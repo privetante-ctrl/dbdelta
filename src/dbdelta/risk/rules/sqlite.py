@@ -30,7 +30,8 @@ def sqlite_rebuild(changes: Sequence[Change], context: RiskContext) -> Iterator[
             by_table.setdefault(key, (change.table, []))[1].append(change)
     for table, table_changes in by_table.values():
         # Mirrors the planner's choice of which tables to rebuild.
-        if all(_alters_in_place(change) for change in table_changes):
+        in_place = all(_alters_in_place(change) for change in table_changes)
+        if in_place and not _drops_every_column(table, table_changes, context):
             continue
         yield Finding(
             "sqlite-rebuild",
@@ -51,3 +52,17 @@ def _alters_in_place(change: Change) -> bool:
     if isinstance(change, AddColumn):
         return can_add_column(change.column)
     return isinstance(change, DropColumn | AddIndex | DropIndex)
+
+
+def _drops_every_column(table: str, changes: Sequence[Change], context: RiskContext) -> bool:
+    """SQLite cannot drop a table's last column, so dropping them all rebuilds the table."""
+    key = name_key(table, context.dialect)
+    old = next((t for t in context.source.tables if name_key(t.name, context.dialect) == key), None)
+    dropped = {
+        name_key(change.column.name, context.dialect)
+        for change in changes
+        if isinstance(change, DropColumn)
+    }
+    return old is not None and dropped >= {
+        name_key(column.name, context.dialect) for column in old.columns
+    }

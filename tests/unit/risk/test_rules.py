@@ -362,6 +362,11 @@ class TestSQLiteRebuild:
 
         assert "sqlite-rebuild" not in {rule for rule, _ in found(TABLE, after, SQLITE)}
 
+    def test_replacing_every_column_is_a_rebuild(self) -> None:
+        before, after = "CREATE TABLE t (a INT)", "CREATE TABLE t (b INT)"
+
+        assert only(before, after, "sqlite-rebuild", SQLITE).subject == "table t"
+
     def test_postgresql_never_rebuilds(self) -> None:
         after = "CREATE TABLE t (id int PRIMARY KEY, a bigint, b text)"
 
