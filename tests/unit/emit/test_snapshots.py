@@ -1,37 +1,40 @@
-"""The migration SQL for every fixture pair, with its risk notes, compared with a stored file.
+"""The migration SQL for every fixture pair, with its notes, compared with stored files.
 
-Regenerate the expected files with ``pytest --update-snapshots`` and review the diff.
+Both directions are kept: ``expected.<dialect>.sql`` migrates A to B and
+``expected.<dialect>.down.sql`` migrates B back to A. Regenerate them with
+``pytest --update-snapshots`` and review the diff.
 """
 
-from collections.abc import Callable
-from pathlib import Path
-
+import pytest
+from tests.conftest import Snapshot
 from tests.support.fixtures import FixturePair
 
+from dbdelta.cli.analysis import migrate
 from dbdelta.dialects import Dialect
-from dbdelta.diff import diff_schemas
-from dbdelta.emit import emit_migration
 from dbdelta.loaders import load_ddl
-from dbdelta.plan import plan_migration
-from dbdelta.risk import RiskContext, assess
 
-Snapshot = Callable[[Path, str], None]
+DIRECTIONS = pytest.mark.parametrize("down", [False, True], ids=["up", "down"])
 
 
-def migration_sql(pair: FixturePair, dialect: Dialect) -> str:
+def migration_sql(pair: FixturePair, dialect: Dialect, *, down: bool) -> str:
     source = load_ddl(pair.a, dialect).schema
     target = load_ddl(pair.b, dialect).schema
-    changes = diff_schemas(source, target, dialect)
-    plan = plan_migration(changes, source, target, dialect)
-    findings = assess(changes, RiskContext(dialect, source, target))
-    return emit_migration(plan, findings=findings).render()
+    if down:
+        source, target = target, source
+    return migrate(source, target, dialect, pair.settings, down=down).script.render()
 
 
-def test_postgresql_migration(postgres_pair: FixturePair, snapshot: Snapshot) -> None:
+@DIRECTIONS
+def test_postgresql_migration(postgres_pair: FixturePair, snapshot: Snapshot, down: bool) -> None:
     dialect = Dialect.POSTGRESQL
-    snapshot(postgres_pair.expected(dialect), migration_sql(postgres_pair, dialect))
+    snapshot(
+        postgres_pair.expected(dialect, down=down), migration_sql(postgres_pair, dialect, down=down)
+    )
 
 
-def test_sqlite_migration(sqlite_pair: FixturePair, snapshot: Snapshot) -> None:
+@DIRECTIONS
+def test_sqlite_migration(sqlite_pair: FixturePair, snapshot: Snapshot, down: bool) -> None:
     dialect = Dialect.SQLITE
-    snapshot(sqlite_pair.expected(dialect), migration_sql(sqlite_pair, dialect))
+    snapshot(
+        sqlite_pair.expected(dialect, down=down), migration_sql(sqlite_pair, dialect, down=down)
+    )

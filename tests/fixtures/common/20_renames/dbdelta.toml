@@ -1,0 +1,2 @@
+# Renames are only generated when detection is on.
+detect-renames = true
