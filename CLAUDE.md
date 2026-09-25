@@ -15,6 +15,7 @@ views, functions, triggers, sequences, partitioning, grants.
 ```bash
 uv sync --all-extras              # install everything, incl. the postgres extra
 uv run pytest                     # tests (add --cov for coverage)
+uv run pytest tests/property --hypothesis-profile=thorough  # 1000 generated examples
 uv run ruff check --fix && uv run ruff format
 uv run mypy                       # strict, over src/ and tests/
 uv run lint-imports               # architecture contracts

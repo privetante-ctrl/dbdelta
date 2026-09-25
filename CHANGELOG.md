@@ -24,15 +24,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - SQL emitters for PostgreSQL and SQLite: transaction blocks, `USING` only where needed,
   concurrent index builds, enum value additions and replacements, identity columns, and
   SQLite table rebuilds that keep the data.
-- 34 fixture schema pairs with expected SQL and round-trip tests on SQLite and PostgreSQL;
+- 35 fixture schema pairs with expected SQL in both directions and round-trip tests on SQLite and PostgreSQL;
   loader equivalence tests between schema files, `pg_dump` output and live databases.
 - Command-line interface: `dbdelta diff`, `plan` and `check` with `text`, `sql`, `json`
   and `markdown` output, `--output`, `--ignore-table`, `--ignore-rule`, `--dialect`,
   `--schema`, `--strict-column-order`, `--concurrent-indexes`, `--large-table-rows` and
   settings in `dbdelta.toml`. `check` exits with 1 on dangerous changes unless
   `--allow-destructive` is given.
+- Rename detection: a dropped and an added table or column of the same shape is reported as
+  a possible rename with a confidence score; `--detect-renames` generates `RENAME` instead.
+- Down migrations with `--down`: the migration back from the target, with the steps that
+  cannot restore lost data marked `IRREVERSIBLE` in the SQL and in every report.
+- Property-based tests with Hypothesis over generated schemas and schema pairs.
 - `docker-compose.yml` with a PostgreSQL server for the tests; CI covers PostgreSQL 14, 16
   and 18.
-- Risk assessment with 13 rules, each with a level, an explanation, a safer alternative and,
+- Risk assessment with 15 rules, each with a level, an explanation, a safer alternative and,
   where the data decides, a query to run before migrating. Findings are also printed as
   comments in the generated SQL.
+
+### Fixed
+
+- Turning a `serial` column into an identity column left its sequence behind, and the next
+  insert could fail with a duplicate key.
+- Check queries could reference a table the migration creates.
+- SQLite migrations that replace every column of a table failed.
+- PostgreSQL CHECK constraints and indexes on a column whose type changes kept a cast to the
+  old type.
+- `DEFAULT -1` on non-`integer` numeric columns loaded differently from a live PostgreSQL
+  database.

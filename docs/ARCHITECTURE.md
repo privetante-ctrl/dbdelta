@@ -130,9 +130,30 @@ records rather than a class hierarchy, so risk rules, the planner and emitters d
 - **Column order** is ignored unless strict checking is requested; new columns are expected at
   the end of the table, where `ADD COLUMN` puts them.
 
+### Renames
+
+A diff only sees names, so a renamed column is a drop and an add, which as a migration
+loses the column's data. `possible_renames` pairs a dropped column with an added column of
+the same type in the same table, and a dropped table with an added table sharing at least
+half of its columns (by name and type). Confidence mixes name similarity (`difflib`) with
+shape: `0.6 · name + 0.4 · (same nullability, default, identity)` for columns and
+`0.4 · name + 0.6 · shared columns` for tables; pairs below 0.6 are ignored, and each object
+joins at most one pair. Confidence is symmetric, so the renames of a down migration are the
+reverse of the up migration's.
+
+By default a pair only produces a `possible-rename` warning. With `--detect-renames`,
+`diff_schemas` turns pairs into `RenameTable` and `RenameColumn`: tables first, then the
+columns of the renamed tables, then the remaining changes, which use the new names.
+`apply_renames` computes the schema as it is after the renames. It follows every reference
+(keys, foreign keys of other tables, index keys, CHECK conditions) and, in PostgreSQL, pins
+the names PostgreSQL derived from the old names (`users_nick_key` keeps its name after
+`users` becomes `members`), so later statements address the constraints the database really
+has.
+
 ## Plan
 
-`plan_migration(changes, source, dialect)` orders changes in fixed phases: first remove what
+`plan_migration(changes, source, dialect)` orders changes in fixed phases: renames first,
+because the other changes use the new names; then remove what
 depends on objects that are about to go (foreign keys, then indexes and constraints), then
 drop columns and tables, then create enum types, tables and columns, alter columns, add
 constraints and indexes, and add foreign keys last, when every table, column and key they
@@ -154,6 +175,23 @@ PostgreSQL checks foreign keys in DDL; SQLite only checks them when rows change.
 In SQLite all foreign keys stay inline in `CREATE TABLE`, which is the only place SQLite
 accepts them.
 
+Where ALTER TABLE changes columns in place (PostgreSQL), CHECK constraints and indexes whose
+SQL reads a column whose type changes are dropped before and re-added after: PostgreSQL would
+keep them with a cast to the old type, which is not what the target declares. In SQLite, a
+table that would lose every column is rebuilt, because SQLite cannot drop a table's last
+column before the new ones are added.
+
+### Down migrations
+
+A down migration is the migration from the target back to the source: the same pipeline
+with the sides swapped, so it gets its own risks (dropping the columns the up migration
+added is dangerous too). What it cannot do is bring back data. `irreversible_changes` marks
+every table and column it creates (the up migration dropped them with their contents) and
+every type change that reverses a conversion that may have changed values (rounding,
+truncating, reformatting); conversions that keep every value or fail, such as `integer` to
+`bigint` or a shorter `varchar`, are reversible. Marked steps carry an `IRREVERSIBLE` comment
+in the SQL and are listed in every report format.
+
 ## Risk
 
 `assess(changes, context)` runs every registered rule over the diff and returns findings,
@@ -174,8 +212,10 @@ before migrating (duplicates, NULLs, rows without a parent, values that do not f
   tables known to be smaller than `large_table_rows` are `info`; anything unknown is treated
   as large and full.
 - **Check queries are real.** `tests/integration/test_risk_checks.py` runs every suggested
-  query against SQLite and PostgreSQL for every fixture pair. Queries about columns the
-  migration adds are left out, since they cannot run before it.
+  query against SQLite and PostgreSQL for every fixture pair, with and without rename
+  detection. Queries run before the migration: those about columns it adds are left out,
+  a foreign key to a table it creates is checked by counting the rows that need a match,
+  and queries written with renamed names are translated back to the old ones.
 - **Findings also appear in the SQL**, as comments above the statements they concern.
 
 | Rule | Level | What it catches |
@@ -193,6 +233,8 @@ before migrating (duplicates, NULLs, rows without a parent, values that do not f
 | `foreign-key` | warning | validation locks both tables; SQLite does not check existing rows |
 | `index-lock` | warning | CREATE INDEX blocks writes without `--concurrent-indexes` |
 | `sqlite-rebuild` | warning | SQLite rebuilds the table: copies all rows, drops triggers |
+| `possible-rename` | warning | a dropped and an added table or column of the same shape look like a rename |
+| `rename` | warning | a rename breaks code, views and functions that use the old name |
 
 ## Emit
 
@@ -277,6 +319,15 @@ request comment, with the SQL folded into `<details>`.
 - **Round-trip on PostgreSQL:** the same round-trip for every PostgreSQL and common pair on a
   real server, each test in its own schema, once in a single transaction and once with
   concurrent indexes.
+- **Down migrations:** every pair also migrates back from B to A on both databases, with its
+  seed rows; tables that existed all along must keep them. Their SQL is kept as
+  `expected.<dialect>.down.sql`. A pair can hold a `dbdelta.toml`, read like the CLI's,
+  for settings such as `detect-renames`.
+- **Property-based tests** (`tests/property/`, Hypothesis): for generated schemas, a schema
+  never differs from itself, the SQL that creates it loads back into it, and rename
+  detection is symmetric. Generated pairs, mostly small edits of each other, must migrate
+  to the target and back on SQLite (with exact column order) and PostgreSQL. Run with
+  `--hypothesis-profile=thorough` for 1000 examples instead of 100.
 - **CLI:** each command runs end to end on fixture files and live databases; the text,
   JSON and Markdown reports of one pair are kept as snapshots in `tests/fixtures/cli/`.
 - **Loader equivalence:** a schema file and the database built from it must load into the
@@ -305,3 +356,6 @@ request comment, with the SQL folded into `<details>`.
   existing id rather than from the old counter.
 - Index keys that are expressions are always emitted in parentheses, so an operator class
   on an expression key is not supported.
+- Enum types and views are not renamed; a renamed enum type is dropped and created.
+- Irreversibility is judged conservatively from types alone: a type change SQLite would
+  make without touching values (it does not enforce most types) may still be marked.
