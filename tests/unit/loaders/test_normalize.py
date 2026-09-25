@@ -25,6 +25,14 @@ BOOLEAN = DataType("boolean")
         (PG, "'ok'::mood", DataType("mood"), "'ok'"),
         # Negative numbers come back as quoted literals.
         (PG, "'-1'::integer", INTEGER, "-1"),
+        # ... on any numeric column, with the literal's own type.
+        (PG, "'-1'::integer", DataType("smallint"), "-1"),
+        (PG, "'-1'::integer", DataType("numeric", (10, 2)), "-1"),
+        (PG, "'3000000000'::bigint", DataType("numeric"), "3000000000"),
+        (PG, "'-1.5'::numeric", DataType("double precision"), "-1.5"),
+        # A cast that changes the number is meaningful.
+        (PG, "'1.7'::integer", DataType("numeric"), "CAST('1.7' AS integer)"),
+        (PG, "'-1'::numeric(3,1)", DataType("integer"), "CAST('-1' AS numeric(3,1))"),
         (PG, "-1", INTEGER, "-1"),
         (PG, "'1.5'::real", DataType("real"), "1.5"),
         (PG, "0", DataType("numeric", (10, 2)), "0"),

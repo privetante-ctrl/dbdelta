@@ -27,6 +27,8 @@ _NUMERIC_TYPES = frozenset(
     {"smallint", "integer", "bigint", "numeric", "real", "double precision", "tinyint"}
 )
 
+_INTEGER_TYPES = frozenset({"smallint", "integer", "bigint"})
+
 # PostgreSQL reports casts to char(n) columns as casts to its internal name bpchar.
 _CAST_ALIASES = {"bpchar": "char"}
 
@@ -122,12 +124,15 @@ def _cast_is_redundant(cast: exp.Cast, column_type: DataType, dialect: Dialect) 
     name = _CAST_ALIASES.get(target.name, target.name)
     if name == column_type.name and target.is_array == column_type.is_array:
         return True
-    return (
-        isinstance(_unwrap(cast.this), exp.Literal)
-        and target in _LOSSLESS_STRING_CASTS
-        and column_type.name in _STRING_TYPES
-        and not column_type.is_array
-    )
+    literal = _unwrap(cast.this)
+    if not isinstance(literal, exp.Literal) or column_type.is_array:
+        return False
+    if column_type.name in _NUMERIC_TYPES and _NUMBER.fullmatch(literal.this):
+        # PostgreSQL stores DEFAULT -1 on any numeric column as '-1'::integer: the literal
+        # cast to its own exact type, which leaves the number as written.
+        is_integer = literal.this.lstrip("-").isdigit()
+        return target == DataType("numeric") or (target.name in _INTEGER_TYPES and is_integer)
+    return target in _LOSSLESS_STRING_CASTS and column_type.name in _STRING_TYPES
 
 
 def _coerce_literal(node: exp.Expr, column_type: DataType) -> exp.Expr:

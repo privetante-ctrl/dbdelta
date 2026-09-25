@@ -122,6 +122,13 @@ POSTGRES_SCHEMAS = {
             l int DEFAULT NULL, m char(2) DEFAULT 'ab'
         );
     """,
+    "negative numbers": """
+        CREATE TABLE t (
+            a smallint DEFAULT -1, b bigint DEFAULT -1, c numeric(10, 2) DEFAULT -1,
+            d real DEFAULT -1, e double precision DEFAULT -1.5, f bigint DEFAULT 3000000000,
+            g numeric DEFAULT -1.5
+        );
+    """,
     "identity and serial": """
         CREATE TABLE a (id serial PRIMARY KEY, n bigserial);
         CREATE TABLE b (id int GENERATED ALWAYS AS IDENTITY PRIMARY KEY);
