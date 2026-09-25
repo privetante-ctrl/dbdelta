@@ -1,0 +1,30 @@
+# Settings for dbdelta, read from dbdelta.toml in the working directory (or --config FILE).
+# Keys are spelled like the command-line options; options given on the command line win,
+# and the pattern lists below are extended by --ignore-table and --ignore-rule.
+
+# Dialect of .sql files. Database URLs name their own.
+dialect = "postgresql"
+
+# PostgreSQL schema to compare on both sides.
+schema = "public"
+
+# Tables that another tool manages, as shell-style patterns.
+ignore-tables = ["django_*", "schema_migrations"]
+
+# Risk rules to skip, by the code shown in reports.
+ignore-rules = []
+
+# Generate RENAME for tables and columns that look renamed instead of reporting them.
+detect-renames = true
+
+# Build and drop PostgreSQL indexes with CONCURRENTLY, outside the migration transaction.
+concurrent-indexes = true
+
+# Row count from which lock warnings apply, when a live database tells the size.
+large-table-rows = 100000
+
+# Report column order differences (PostgreSQL cannot reorder columns; SQLite rebuilds).
+strict-column-order = false
+
+# Let `dbdelta check` pass although changes are dangerous.
+allow-destructive = false

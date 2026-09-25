@@ -1,0 +1,101 @@
+current.sql -> desired.sql (postgresql)
+
+Changes
+ #   Change                                                                                  Risk
+────────────────────────────────────────────────────────────────────────────────────────────────────
+ 1   change values of enum type order_status from ('new', 'paid', 'shipped') to ('new',
+     'paid', 'shipped', 'refunded')
+ 2   drop column customers.phone                                                             danger
+ 3   add column customers.loyalty_tier text NOT NULL                                         danger
+ 4   change type of customers.email from varchar(255) to varchar(120)                        danger
+ 5   create unique index ux_customers_email on customers (LOWER("email"))                    warning
+ 6   drop foreign key order_items (product_id) -> products (id)
+ 7   add foreign key order_items (product_id) -> products (id) ON DELETE RESTRICT            warning
+ 8   add check constraint on order_items ("quantity" > 0)                                    warning
+ 9   drop column orders.created                                                              danger
+10   add column orders.created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP             warning
+11   create index ix_orders_customer on orders (customer_id)                                 warning
+
+Risks
+
+DANGER  narrowing-type  customers.email
+  customers.email changes from varchar(255) to the narrower varchar(120). Values longer than 120
+  characters make the migration fail.
+  Safer: Check the data with the query below and clean up values that do not fit, or keep the wider
+  type.
+  Check before migrating:
+    SELECT count(*) FROM "customers" WHERE length("customers"."email") > 120
+
+DANGER  add-not-null-column  customers.loyalty_tier
+  customers.loyalty_tier is added as NOT NULL without a default, which fails as soon as customers
+  holds any row: existing rows would have no value.
+  Safer: Add the column as nullable or with a DEFAULT, fill it for existing rows, then make it NOT
+  NULL in a later step. In PostgreSQL 11 and later, ADD COLUMN with a constant DEFAULT is instant.
+  Check before migrating:
+    SELECT count(*) FROM "customers"
+
+DANGER  drop-column  customers.phone
+  Dropping customers.phone permanently deletes its value in every row.
+  Safer: Stop reading and writing the column in the application and deploy that first, back the
+  values up, then drop the column in a later migration (expand and contract).
+  Check before migrating:
+    SELECT count(*) FROM "customers" WHERE "customers"."phone" IS NOT NULL
+
+DANGER  drop-column  orders.created
+  Dropping orders.created permanently deletes its value in every row.
+  Safer: Stop reading and writing the column in the application and deploy that first, back the
+  values up, then drop the column in a later migration (expand and contract).
+  Check before migrating:
+    SELECT count(*) FROM "orders" WHERE "orders"."created" IS NOT NULL
+
+WARNING  check-violations  check on order_items ("quantity" > 0)
+  Rows already in order_items may violate CHECK ("quantity" > 0), which makes the migration fail.
+  PostgreSQL checks every row while holding an ACCESS EXCLUSIVE lock that blocks reads and writes.
+  Safer: Fix the violating rows first. On a large table, add the constraint with NOT VALID and run
+  ALTER TABLE ... VALIDATE CONSTRAINT separately; validating does not block writes.
+  Check before migrating:
+    SELECT count(*) FROM "order_items" WHERE NOT ("quantity" > 0)
+
+WARNING  possible-rename  column orders.created
+  Column orders.created is dropped and created_at is added with the same shape; this looks like a
+  rename (confidence 89%). As written, the migration deletes its values instead of keeping them.
+  Safer: If it is a rename, run with --detect-renames to generate a RENAME, which keeps the data.
+  Otherwise, make sure the data is no longer needed.
+
+WARNING  type-rewrite  customers.email
+  Changing customers.email from varchar(255) to varchar(120) makes PostgreSQL rewrite the whole
+  table and its indexes while holding an ACCESS EXCLUSIVE lock that blocks reads and writes.
+  Safer: On a large table, add a new column of the new type, backfill it in batches, switch the
+  application over and drop the old column; otherwise run the migration in a maintenance window.
+
+WARNING  foreign-key  foreign key order_items (product_id) -> products
+  Adding the foreign key checks every row of order_items while holding SHARE ROW EXCLUSIVE locks on
+  order_items and products, which block writes to both; rows without a match make the migration
+  fail.
+  Safer: Add the constraint with NOT VALID, which only takes a brief lock, then run ALTER TABLE ...
+  VALIDATE CONSTRAINT in a separate transaction; validating does not block writes.
+  Check before migrating:
+    SELECT count(*) FROM "order_items" AS child WHERE child."product_id" IS NOT NULL AND NOT EXISTS
+    (SELECT 1 FROM "products" AS parent WHERE parent."id" = child."product_id")
+
+WARNING  index-lock  index ix_orders_customer on orders
+  Building ix_orders_customer blocks inserts, updates and deletes on orders (SHARE lock) until the
+  whole table has been indexed.
+  Safer: Run with --concurrent-indexes to build it with CREATE INDEX CONCURRENTLY outside the
+  transaction: it takes longer but does not block writes.
+
+WARNING  index-lock  index ux_customers_email on customers
+  Building ux_customers_email blocks inserts, updates and deletes on customers (SHARE lock) until
+  the whole table has been indexed.
+  Safer: Run with --concurrent-indexes to build it with CREATE INDEX CONCURRENTLY outside the
+  transaction: it takes longer but does not block writes.
+
+WARNING  unique-duplicates  unique index on customers (LOWER("email"))
+  Rows already in customers may contain duplicates of (LOWER("email")), which make adding the unique
+  index fail.
+  Safer: Remove the duplicates first.
+  Check before migrating:
+    SELECT LOWER("email"), count(*) FROM "customers" WHERE LOWER("email") IS NOT NULL GROUP BY
+    LOWER("email") HAVING count(*) > 1
+
+11 changes, 11 risks: 4 danger, 7 warning.
