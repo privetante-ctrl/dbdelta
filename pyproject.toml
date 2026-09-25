@@ -8,7 +8,7 @@ license = "MIT"
 license-files = ["LICENSE"]
 keywords = ["database", "schema", "migration", "diff", "postgresql", "sqlite", "ddl"]
 classifiers = [
-    "Development Status :: 2 - Pre-Alpha",
+    "Development Status :: 3 - Alpha",
     "Environment :: Console",
     "Intended Audience :: Developers",
     "Operating System :: OS Independent",
@@ -37,11 +37,25 @@ dbdelta = "dbdelta.cli.app:app"
 
 [project.urls]
 Repository = "https://github.com/privetante-ctrl/dbdelta"
+Documentation = "https://github.com/privetante-ctrl/dbdelta/blob/main/docs/ARCHITECTURE.md"
+Issues = "https://github.com/privetante-ctrl/dbdelta/issues"
 Changelog = "https://github.com/privetante-ctrl/dbdelta/blob/main/CHANGELOG.md"
 
 [build-system]
 requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "src/",
+    "tests/",
+    "docs/",
+    "examples/",
+    "README.md",
+    "CHANGELOG.md",
+    "CONTRIBUTING.md",
+    "LICENSE",
+]
 
 [dependency-groups]
 dev = [
