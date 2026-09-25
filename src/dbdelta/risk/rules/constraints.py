@@ -106,7 +106,17 @@ def foreign_key(change: Change, context: RiskContext) -> Finding | None:
         return None
     table, fk = change.table, change.foreign_key
     subject = f"foreign key {table} ({', '.join(fk.columns)}) -> {fk.ref_table}"
-    check_sql = _orphans(table, fk) if columns_exist(context, table, fk.columns) else None
+    # A referenced table or key the migration creates is empty when the key is added.
+    parent_is_new = not columns_exist(context, fk.ref_table, fk.ref_columns)
+    check_sql = None
+    if columns_exist(context, table, fk.columns):
+        check_sql = _with_keys(table, fk) if parent_is_new else _orphans(table, fk)
+    empty_parent = (
+        f" {fk.ref_table} ({', '.join(fk.ref_columns)}) is new and holds no rows yet, so no "
+        "row has a match."
+        if parent_is_new
+        else ""
+    )
     if not is_postgresql(context):
         return Finding(
             "foreign-key",
@@ -114,7 +124,7 @@ def foreign_key(change: Change, context: RiskContext) -> Finding | None:
             subject,
             f"SQLite does not check existing rows of {table} when a foreign key is added. The "
             "migration runs PRAGMA foreign_key_check, which lists rows without a match but "
-            "does not stop the migration.",
+            f"does not stop the migration.{empty_parent}",
             "Delete or fix rows without a matching row before migrating.",
             (change,),
             check_sql=check_sql,
@@ -125,7 +135,7 @@ def foreign_key(change: Change, context: RiskContext) -> Finding | None:
         subject,
         f"Adding the foreign key checks every row of {table} while holding SHARE ROW EXCLUSIVE "
         f"locks on {table} and {fk.ref_table}, which block writes to both; rows without a "
-        "match make the migration fail.",
+        f"match make the migration fail.{empty_parent}",
         "Add the constraint with NOT VALID, which only takes a brief lock, then run ALTER "
         "TABLE ... VALIDATE CONSTRAINT in a separate transaction; validating does not block "
         "writes.",
@@ -144,6 +154,12 @@ def _read_columns(keys: list[str | Expression], where: Expression | None) -> set
 
 def _key_sql(key: str | Expression) -> str:
     return quote_identifier(key) if isinstance(key, str) else key.sql
+
+
+def _with_keys(table: str, fk: ForeignKey) -> str:
+    """Rows of ``table`` that need a match; all of them lack one when the parent is new."""
+    present = " AND ".join(f"{quote_identifier(name)} IS NOT NULL" for name in fk.columns)
+    return f"SELECT count(*) FROM {quote_identifier(table)} WHERE {present}"
 
 
 def _orphans(table: str, fk: ForeignKey) -> str:

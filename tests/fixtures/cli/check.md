@@ -83,7 +83,7 @@ From `a.sql` to `b.sql` (postgresql).
 
 - 🟠 **warning** `foreign-key` on foreign key teams (league\_id) -> leagues
 
-  Adding the foreign key checks every row of teams while holding SHARE ROW EXCLUSIVE locks on teams and leagues, which block writes to both; rows without a match make the migration fail.
+  Adding the foreign key checks every row of teams while holding SHARE ROW EXCLUSIVE locks on teams and leagues, which block writes to both; rows without a match make the migration fail. leagues (id) is new and holds no rows yet, so no row has a match.
 
   **Safer:** Add the constraint with NOT VALID, which only takes a brief lock, then run ALTER TABLE ... VALIDATE CONSTRAINT in a separate transaction; validating does not block writes.
 
@@ -195,7 +195,7 @@ ALTER TABLE "players" ADD FOREIGN KEY ("team_id") REFERENCES "teams" ("id") ON D
 -- add foreign key teams (league_id) -> leagues (id)
 -- WARNING foreign-key: Adding the foreign key checks every row of teams while holding SHARE ROW
 --   EXCLUSIVE locks on teams and leagues, which block writes to both; rows without a match make
---   the migration fail.
+--   the migration fail. leagues (id) is new and holds no rows yet, so no row has a match.
 ALTER TABLE "teams" ADD FOREIGN KEY ("league_id") REFERENCES "leagues" ("id");
 
 COMMIT;

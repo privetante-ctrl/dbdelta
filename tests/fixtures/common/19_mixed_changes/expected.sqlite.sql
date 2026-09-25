@@ -67,7 +67,7 @@ CREATE UNIQUE INDEX "ux_players_email" ON "players" ("email");
 --   add foreign key teams (league_id) -> leagues (id)
 -- WARNING foreign-key: SQLite does not check existing rows of teams when a foreign key is added.
 --   The migration runs PRAGMA foreign_key_check, which lists rows without a match but does not
---   stop the migration.
+--   stop the migration. leagues (id) is new and holds no rows yet, so no row has a match.
 -- WARNING sqlite-rebuild: SQLite cannot make these changes to teams in place, so the table is
 --   rebuilt: a new table is created, every row is copied, the old table is dropped and the new
 --   one renamed. Writes to the database wait meanwhile, a full copy of the table needs free

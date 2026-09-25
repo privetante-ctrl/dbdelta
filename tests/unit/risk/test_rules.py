@@ -301,6 +301,17 @@ class TestConstraints:
             'parent."x" = child."p2")'
         )
 
+    def test_a_new_parent_table_has_no_rows_to_match(self) -> None:
+        before = "CREATE TABLE c (p int)"
+        after = "CREATE TABLE p (id int PRIMARY KEY); CREATE TABLE c (p int REFERENCES p)"
+
+        finding = only(before, after, "foreign-key")
+
+        assert finding.message.endswith(
+            "p (id) is new and holds no rows yet, so no row has a match."
+        )
+        assert finding.check_sql == 'SELECT count(*) FROM "c" WHERE "p" IS NOT NULL'
+
     def test_foreign_keys_in_sqlite_are_not_checked(self) -> None:
         before = "CREATE TABLE p (id INTEGER PRIMARY KEY); CREATE TABLE c (p INT)"
         after = "CREATE TABLE p (id INTEGER PRIMARY KEY); CREATE TABLE c (p INT REFERENCES p)"
